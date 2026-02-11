@@ -1,0 +1,115 @@
+// Learn Lite Database Schema
+// Prisma ORM Configuration
+// Database: SQLite (dev.db) or PostgreSQL (production)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User model - authentication and profile
+model User {
+  id              Int      @id @default(autoincrement())
+  username        String   @unique
+  email           String   @unique
+  password        String
+  fuelBalance     Int      @default(0)
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  backups         Backup[]
+  classSections   ClassSection[]
+  storageUsage    StorageUsage?
+  plan            Plan?    @relation(fields: [planId], references: [id])
+  planId          Int?
+}
+
+// Backup model - for quiz/chat/note backups
+model Backup {
+  id              Int      @id @default(autoincrement())
+  quizzes         String?  // JSON-serialized quiz metadata
+  messages        String?  // JSON-serialized chat messages
+  notes           String?  // JSON-serialized notes
+  timestamp       DateTime @default(now())
+  
+  // Relations
+  user            User?    @relation(fields: [userId], references: [id])
+  userId          Int?
+}
+
+// Contact model - contact form submissions
+model Contact {
+  id              Int      @id @default(autoincrement())
+  name            String?
+  email           String?
+  subject         String?
+  message         String?
+  timestamp       DateTime @default(now())
+  userId          Int?
+}
+
+// Analytics model - usage analytics and metrics
+model Analytics {
+  id              Int      @id @default(autoincrement())
+  userId          Int?     // optional link to authenticated user
+  ageRange        String?  // e.g. "18-24"
+  country         String?  // optional, user-provided or geo-derived
+  city            String?
+  deviceType      String?  // e.g. "mobile", "desktop"
+  activeHours     String?  // comma-separated summary or JSON string
+  interests       String?  // comma-separated tags
+  engagement      String?  // JSON-serialized engagement metrics
+  createdAt       DateTime @default(now())
+}
+
+// Plan model - subscription/quota tiers
+model Plan {
+  id              Int      @id @default(autoincrement())
+  name            String   @unique
+  monthlyQuotaBytes Int    @default(104857600) // default 100MB
+  maxClassSections Int     @default(1)
+  priceCents      Int?     // for future payment integration
+  
+  // Relations
+  users           User[]
+}
+
+// StorageUsage model - track user storage consumption
+model StorageUsage {
+  id              Int      @id @default(autoincrement())
+  usedBytes       Int      @default(0)
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  user            User     @relation(fields: [userId], references: [id])
+  userId          Int      @unique
+}
+
+// ClassSection model - group/class organization
+model ClassSection {
+  id              Int      @id @default(autoincrement())
+  name            String
+  memberCount     Int      @default(0)
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  owner           User     @relation(fields: [ownerId], references: [id])
+  ownerId         Int
+}
+
+// Payment model - track processed payment transactions for idempotency
+model Payment {
+  id              Int      @id @default(autoincrement())
+  reference       String   @unique
+  userId          Int
+  amount          Int      // amount in kobo
+  fuelAdded       Int      // fuel units added
+  status          String   // "success", "failed", "pending"
+  paystackData    String?  // JSON-serialized Paystack response
+  createdAt       DateTime @default(now())
+  processedAt     DateTime @default(now())
+}
