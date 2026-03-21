@@ -11,9 +11,32 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Role {
+  USER
+  ADMIN
+  ROOT_ADMIN
+  SYSTEM_OWNER
+  FINANCE_CONTROLLER
+  ACADEMIC_REGISTRAR
+  OPS_MODERATOR
+  SOCIAL_MEDIA_CONTROLLER
+  FIN_CONTROLLER
+  OPS_MOD
+  SUPPORT_MOD
+  CONTENT_AUDITOR
+}
+
+enum GroupMemberRole {
+  ADMIN
+  MEMBER
+}
+
 // User model - authentication and profile
 model User {
   id              Int      @id @default(autoincrement())
+  idNumber        Int?     @unique
+  role            Role     @default(USER)
+  isActive        Boolean  @default(true)
   username        String   @unique
   email           String   @unique
   password        String
@@ -26,6 +49,38 @@ model User {
   storageUsage    StorageUsage?
   plan            Plan?    @relation(fields: [planId], references: [id])
   planId          Int?
+  createdGroups   Group[]
+  groupMemberships GroupMember[]
+  sentStaffMessages StaffMessage[] @relation("StaffMessageSender")
+  receivedStaffMessages StaffMessage[] @relation("StaffMessageRecipient")
+  staffActivities StaffActivity[]
+  contactReplies  ContactReply[]
+}
+
+model Group {
+  id          Int           @id @default(autoincrement())
+  name        String
+  joinCode    String        @unique
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  createdById Int
+
+  creator     User          @relation(fields: [createdById], references: [id])
+  members     GroupMember[]
+}
+
+model GroupMember {
+  groupId           Int
+  userId            Int
+  role              GroupMemberRole @default(MEMBER)
+  customBackground  String?
+  joinedAt          DateTime        @default(now())
+
+  group             Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, userId])
+  @@index([userId])
 }
 
 // Backup model - for quiz/chat/note backups
@@ -48,8 +103,30 @@ model Contact {
   email           String?
   subject         String?
   message         String?
+  status          String   @default("unread") // "unread", "read", "responded"
   timestamp       DateTime @default(now())
   userId          Int?
+
+  // Relations
+  replies         ContactReply[]
+  
+  @@index([status, timestamp])
+}
+
+// ContactReply model - social media controller responses to contacts
+model ContactReply {
+  id              Int      @id @default(autoincrement())
+  contactId       Int
+  responderId     Int
+  responderEmail  String
+  replyBody       String
+  createdAt       DateTime @default(now())
+
+  contact         Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  responder       User     @relation(fields: [responderId], references: [id])
+
+  @@index([contactId])
+  @@index([responderId, createdAt])
 }
 
 // Analytics model - usage analytics and metrics
@@ -112,4 +189,37 @@ model Payment {
   paystackData    String?  // JSON-serialized Paystack response
   createdAt       DateTime @default(now())
   processedAt     DateTime @default(now())
+}
+
+model StaffMessage {
+  id              Int      @id @default(autoincrement())
+  senderId        Int
+  recipientId     Int
+  recipientRole   Role
+  subject         String
+  body            String
+  isRead          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  sender          User     @relation("StaffMessageSender", fields: [senderId], references: [id])
+  recipient       User     @relation("StaffMessageRecipient", fields: [recipientId], references: [id])
+
+  @@index([recipientId, isRead, createdAt])
+  @@index([senderId, createdAt])
+}
+
+model StaffActivity {
+  id              Int      @id @default(autoincrement())
+  actorId         Int
+  actorRole       Role
+  actorEmail      String
+  action          String
+  target          String?
+  details         String?
+  createdAt       DateTime @default(now())
+
+  actor           User     @relation(fields: [actorId], references: [id])
+
+  @@index([createdAt])
+  @@index([actorRole, createdAt])
 }

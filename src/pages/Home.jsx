@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
+import { getApiErrorMessage, groupAPI } from '../services/api';
 
 // ========================================
 // UTILITY FUNCTIONS
@@ -43,7 +44,13 @@ const Header = () => {
   return (
     <header>
       <div className="brand">
-        <div className="logo" aria-hidden="true">LL</div>
+        <div className="logo" aria-hidden="true" style={{ overflow: 'hidden' }}>
+          <img
+            src="/app-icon.png"
+            alt="Learn Lite logo"
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        </div>
         <div>
           <h1 style={{ margin: 0 }}>Learn Lite</h1>
           <div className="muted" style={{ fontSize: '12px' }}>
@@ -349,41 +356,119 @@ const Modal = ({ isOpen, onClose, children }) => {
 // ========================================
 
 const Hero = ({ uploadedFile, onFileChange }) => {
+  const navigate = useNavigate();
   const [slideText, setSlideText] = useState('');
   const [modalType, setModalType] = useState(null);
-  const [groupLink, setGroupLink] = useState('');
+  const [groupName, setGroupName] = useState('');
+  const [joinCode, setJoinCode] = useState('');
+  const [createdCode, setCreatedCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [quickAccessLoading, setQuickAccessLoading] = useState(false);
   const fileInputRef = useRef(null);
 
   const handleCreateGroup = () => {
-    const groupId = 'CG-' + Math.random().toString(36).substr(2, 8).toUpperCase();
-    const link = window.location.origin + '/secondquizpage.html?id=' + groupId;
-    setGroupLink(link);
+    setGroupName('');
+    setCreatedCode('');
     setModalType('create');
   };
 
   const handleJoinGroup = () => {
+    setJoinCode('');
     setModalType('join');
   };
 
-  const copyLink = () => {
-    navigator.clipboard.writeText(groupLink).then(() => {
-      alert('Link copied!');
-    });
+  const handleQuickAccessGroup = async () => {
+    if (quickAccessLoading) return;
+
+    setQuickAccessLoading(true);
+    try {
+      const result = await groupAPI.getMyGroups();
+      const groups = result?.groups || [];
+
+      if (!groups.length) {
+        alert('You do not belong to any class group yet. Create one or join with a code.');
+        return;
+      }
+
+      const preferredGroup = groups.find((group) => group.isOwner) || groups[0];
+      localStorage.setItem('currentGroupId', String(preferredGroup.id));
+      if (preferredGroup.joinCode) {
+        localStorage.setItem('currentGroupCode', preferredGroup.joinCode);
+      }
+
+      navigate(`/generate-quiz/${preferredGroup.id}`);
+    } catch (err) {
+      const message = getApiErrorMessage(err, 'Unable to access your group right now.');
+      alert(message);
+    } finally {
+      setQuickAccessLoading(false);
+    }
   };
 
-  const proceedCreate = () => {
-    setModalType(null);
-    alert('Class group created! (Demo)');
-  };
-
-  const proceedJoin = () => {
-    const id = document.getElementById('classIdInput')?.value.trim();
-    if (!id) {
-      alert('Please enter a class ID.');
+  const proceedCreate = async () => {
+    if (!groupName.trim()) {
+      alert('Please enter a group name.');
       return;
     }
-    setModalType(null);
-    window.location.href = '/secondquizpage.html?id=' + encodeURIComponent(id);
+
+    setLoading(true);
+    try {
+      const result = await groupAPI.createGroup(groupName);
+      if (result.success) {
+        setCreatedCode(result.group.joinCode);
+        alert(`Success! Your Class Code is: ${result.group.joinCode}`);
+        localStorage.setItem('currentGroupId', result.group.id);
+        localStorage.setItem('currentGroupCode', result.group.joinCode);
+        setModalType(null);
+        navigate(`/generate-quiz/${result.group.id}`);
+      } else {
+        alert('Error: ' + (result.error || 'Failed to create group'));
+      }
+    } catch (err) {
+      alert('Error creating group: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const proceedJoin = async () => {
+    if (!joinCode.trim()) {
+      alert('Please enter a join code.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await groupAPI.joinGroupByCode(joinCode.trim());
+      if (result.success) {
+        alert(`Successfully joined ${result.group.name}!`);
+        localStorage.setItem('currentGroupId', result.group.id);
+        localStorage.setItem('currentGroupCode', result.group.joinCode);
+        setModalType(null);
+        navigate(`/generate-quiz/${result.group.id}`);
+      } else {
+        alert('Error: ' + (result.error || 'Failed to join group'));
+      }
+    } catch (err) {
+      const message = getApiErrorMessage(err, 'Failed to join group');
+      const existingGroupId = err.response?.data?.group?.id;
+      const existingGroupCode = err.response?.data?.group?.joinCode;
+
+      if (existingGroupId && /already a member/i.test(message)) {
+        localStorage.setItem('currentGroupId', existingGroupId);
+        if (existingGroupCode) {
+          localStorage.setItem('currentGroupCode', existingGroupCode);
+        }
+        setModalType(null);
+        alert(`You're already a member of this group. Opening ${err.response?.data?.group?.name || 'the group'}...`);
+        navigate(`/generate-quiz/${existingGroupId}`);
+        return;
+      }
+
+      alert('Error joining group: ' + message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleExamples = () => {
@@ -420,6 +505,9 @@ const Hero = ({ uploadedFile, onFileChange }) => {
               <button className="secondary" id="joinGroupBtn" onClick={handleJoinGroup}>
                 Join Class Group
               </button>
+              <button className="secondary" id="myGroupBtn" onClick={handleQuickAccessGroup} disabled={quickAccessLoading}>
+                {quickAccessLoading ? 'Opening...' : 'Go to My Group'}
+              </button>
             </div>
             <div style={{ marginTop: '14px', fontSize: '13px', color: 'var(--muted)' }}>
               Pro tip: Combine typed notes and photos of whiteboard scribbles for richer quizzes.
@@ -444,33 +532,47 @@ const Hero = ({ uploadedFile, onFileChange }) => {
       {/* Create Group Modal */}
       <Modal isOpen={modalType === 'create'} onClose={() => setModalType(null)}>
         <h3>Create Class Group</h3>
-        <div style={{ margin: '18px 0 8px 0', fontSize: '16px' }}>Create a class group with only ten members.</div>
-        <div style={{ margin: '12px 0', fontSize: '15px' }}>
-          Share this link with others to join your group:
-          <br />
-          <input
-            type="text"
-            id="groupLinkInput"
-            value={groupLink}
-            readOnly
-            style={{ width: '90%', marginTop: '8px' }}
-          />
-          <button className="btn" id="copyLinkBtn" style={{ marginTop: '8px' }} onClick={copyLink}>
-            Copy Link
-          </button>
-        </div>
-        <button className="btn" id="proceedCreate" onClick={proceedCreate}>
-          Proceed
+        <div style={{ margin: '18px 0 8px 0', fontSize: '16px' }}>Enter your class group name:</div>
+        <input
+          type="text"
+          id="groupNameInput"
+          placeholder="e.g., Biology 101, Advanced Calculus"
+          value={groupName}
+          onChange={(e) => setGroupName(e.target.value)}
+          style={{ width: '100%', padding: '10px', marginBottom: '12px', borderRadius: '6px', border: '1px solid #ddd' }}
+        />
+        <button 
+          className="btn" 
+          id="proceedCreate" 
+          onClick={proceedCreate}
+          disabled={loading}
+          style={{ width: '100%' }}
+        >
+          {loading ? 'Creating...' : 'Create Group'}
         </button>
       </Modal>
 
       {/* Join Group Modal */}
       <Modal isOpen={modalType === 'join'} onClose={() => setModalType(null)}>
         <h3>Join Class Group</h3>
-        <div style={{ margin: '18px 0 8px 0', fontSize: '16px' }}>Enter class ID number to join:</div>
-        <input type="text" id="classIdInput" placeholder="Class ID" maxLength="16" />
-        <button className="btn" id="proceedJoin" onClick={proceedJoin}>
-          Proceed
+        <div style={{ margin: '18px 0 8px 0', fontSize: '16px' }}>Enter the 6-letter class code:</div>
+        <input 
+          type="text" 
+          id="classIdInput" 
+          placeholder="e.g., MATH24"
+          value={joinCode}
+          onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+          maxLength="6"
+          style={{ width: '100%', padding: '10px', marginBottom: '12px', borderRadius: '6px', border: '1px solid #ddd', textTransform: 'uppercase', letterSpacing: '2px' }}
+        />
+        <button 
+          className="btn" 
+          id="proceedJoin" 
+          onClick={proceedJoin}
+          disabled={loading}
+          style={{ width: '100%' }}
+        >
+          {loading ? 'Joining...' : 'Join Group'}
         </button>
       </Modal>
     </>
@@ -504,17 +606,200 @@ const Features = () => {
 };
 
 // ========================================
+// CONTACT SECTION
+// ========================================
+
+const Contact = ({ onSubmit }) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    subject: '',
+    message: ''
+  });
+  const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!formData.name || !formData.email || !formData.subject || !formData.message) {
+      alert('Please fill in all fields');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await onSubmit(formData);
+      setFormData({ name: '', email: '', subject: '', message: '' });
+      setSubmitted(true);
+      setTimeout(() => setSubmitted(false), 5000);
+    } catch (err) {
+      alert('Failed to submit contact form. Please try again.');
+      console.error('Contact submission error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div aria-label="Contact us">
+      <h3 style={{ margin: '0 0 8px 0' }}>Get in Touch</h3>
+      <p className="muted" style={{ margin: '0 0 24px 0' }}>
+        Have a question or feedback? We'd love to hear from you. Drop us a comment below.
+      </p>
+      
+      {submitted && (
+        <div style={{
+          padding: '12px 16px',
+          borderRadius: '8px',
+          background: 'rgba(0, 200, 83, 0.1)',
+          border: '1px solid rgba(0, 200, 83, 0.3)',
+          color: '#00c853',
+          marginBottom: '16px',
+          fontSize: '14px'
+        }}>
+          ✓ Thank you for your message! We'll get back to you soon.
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} style={{ maxWidth: '600px' }}>
+        <div style={{ marginBottom: '16px' }}>
+          <label htmlFor="contactName" style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 600 }}>
+            Name
+          </label>
+          <input
+            id="contactName"
+            type="text"
+            name="name"
+            value={formData.name}
+            onChange={handleInputChange}
+            placeholder="Your name"
+            style={{
+              width: '100%',
+              padding: '10px',
+              borderRadius: '6px',
+              border: '1px solid var(--glass)',
+              background: 'var(--card)',
+              color: 'var(--text)',
+              fontSize: '14px',
+              boxSizing: 'border-box'
+            }}
+          />
+        </div>
+
+        <div style={{ marginBottom: '16px' }}>
+          <label htmlFor="contactEmail" style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 600 }}>
+            Email
+          </label>
+          <input
+            id="contactEmail"
+            type="email"
+            name="email"
+            value={formData.email}
+            onChange={handleInputChange}
+            placeholder="your@email.com"
+            style={{
+              width: '100%',
+              padding: '10px',
+              borderRadius: '6px',
+              border: '1px solid var(--glass)',
+              background: 'var(--card)',
+              color: 'var(--text)',
+              fontSize: '14px',
+              boxSizing: 'border-box'
+            }}
+          />
+        </div>
+
+        <div style={{ marginBottom: '16px' }}>
+          <label htmlFor="contactSubject" style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 600 }}>
+            Subject
+          </label>
+          <input
+            id="contactSubject"
+            type="text"
+            name="subject"
+            value={formData.subject}
+            onChange={handleInputChange}
+            placeholder="e.g., Feature request, Bug report"
+            style={{
+              width: '100%',
+              padding: '10px',
+              borderRadius: '6px',
+              border: '1px solid var(--glass)',
+              background: 'var(--card)',
+              color: 'var(--text)',
+              fontSize: '14px',
+              boxSizing: 'border-box'
+            }}
+          />
+        </div>
+
+        <div style={{ marginBottom: '16px' }}>
+          <label htmlFor="contactMessage" style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 600 }}>
+            Message
+          </label>
+          <textarea
+            id="contactMessage"
+            name="message"
+            value={formData.message}
+            onChange={handleInputChange}
+            placeholder="Tell us what's on your mind..."
+            rows="5"
+            style={{
+              width: '100%',
+              padding: '10px',
+              borderRadius: '6px',
+              border: '1px solid var(--glass)',
+              background: 'var(--card)',
+              color: 'var(--text)',
+              fontSize: '14px',
+              fontFamily: 'inherit',
+              boxSizing: 'border-box',
+              resize: 'vertical'
+            }}
+          />
+        </div>
+
+        <button 
+          type="submit"
+          className="btn"
+          disabled={loading}
+          style={{ width: '100%' }}
+        >
+          {loading ? 'Sending...' : 'Send Message'}
+        </button>
+      </form>
+    </div>
+  );
+};
+
+// ========================================
 // FOOTER
 // ========================================
 
-const Footer = () => {
+const Footer = ({ onOpenContact }) => {
   return (
     <footer>
       <div>
         © Learn Lite — built for students • <span className="muted">Made with ♥</span>
       </div>
       <div>
-        <a href="#contact">Contact</a> | <a href="#terms">Terms</a> | <a href="#privacy">Privacy</a>
+        <button
+          type="button"
+          onClick={onOpenContact}
+          style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, font: 'inherit' }}
+        >
+          Contact
+        </button>
+        {' '}| <a href="#terms">Terms</a> | <a href="#privacy">Privacy</a>
       </div>
     </footer>
   );
@@ -526,6 +811,26 @@ const Footer = () => {
 
 export default function Home() {
   const { uploadedFile, setFile } = useApp();
+  const [isContactOpen, setIsContactOpen] = useState(false);
+
+  const handleContactSubmit = async (formData) => {
+    try {
+      const response = await fetch('http://localhost:4000/api/contact', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(formData)
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to submit contact form');
+      }
+    } catch (err) {
+      console.error('Contact submission error:', err);
+      throw err;
+    }
+  };
 
   // Service worker registration
   useEffect(() => {
@@ -544,7 +849,11 @@ export default function Home() {
       <Header />
       <Hero uploadedFile={uploadedFile} onFileChange={setFile} />
       <Features />
-      <Footer />
+      <Footer onOpenContact={() => setIsContactOpen(true)} />
+
+      <Modal isOpen={isContactOpen} onClose={() => setIsContactOpen(false)}>
+        <Contact onSubmit={handleContactSubmit} />
+      </Modal>
     </div>
   );
 }

@@ -9,6 +9,7 @@ export default function VideoGenerator() {
   
   // State Management
   const [prompt, setPrompt] = useState('');
+  const [selectedLanguage, setSelectedLanguage] = useState('English');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
@@ -271,7 +272,10 @@ export default function VideoGenerator() {
       
       const response = await axios.post(
         'http://localhost:4000/api/videos/generate',
-        { prompt: prompt.trim() },
+        { 
+          prompt: prompt.trim(),
+          language: selectedLanguage
+        },
         {
           headers: {
             'Content-Type': 'application/json',
@@ -348,7 +352,13 @@ export default function VideoGenerator() {
             ← Back
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div className="logo" style={{ width: '40px', height: '40px' }}>LL</div>
+            <div className="logo" style={{ width: '40px', height: '40px', overflow: 'hidden' }}>
+              <img
+                src="/app-icon.png"
+                alt="Learn Lite logo"
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+            </div>
             <div>
               <h2 style={{ margin: 0, fontSize: '18px' }}>Video Generator</h2>
               <div className="muted" style={{ fontSize: '12px' }}>AI-powered video tutorials</div>
@@ -441,6 +451,67 @@ export default function VideoGenerator() {
                   ? `You have ${fuelBalance} fuel available` 
                   : 'You need fuel to generate videos. Click "Buy Fuel" to purchase.'}
               </span>
+            </div>
+          </div>
+
+          {/* Video Customization Section */}
+          <div style={{ 
+            marginBottom: '24px',
+            padding: '20px',
+            background: 'var(--glass)',
+            borderRadius: '10px',
+            border: '1px solid rgba(255,255,255,0.05)'
+          }}>
+            <h4 style={{ 
+              fontSize: '16px', 
+              fontWeight: 700, 
+              marginBottom: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <span>🎬</span>
+              Video Customization
+            </h4>
+
+            {/* Language Selection */}
+            <div style={{ marginBottom: '16px' }}>
+              <label 
+                htmlFor="videoLanguage" 
+                style={{ 
+                  display: 'block', 
+                  marginBottom: '8px', 
+                  fontWeight: 600, 
+                  fontSize: '14px' 
+                }}
+              >
+                🌐 Voice Language
+              </label>
+              <select
+                id="videoLanguage"
+                value={selectedLanguage}
+                onChange={(e) => setSelectedLanguage(e.target.value)}
+                disabled={loading}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'var(--glass-2)',
+                  color: 'var(--text)',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="English">English 🇬🇧</option>
+                <option value="Spanish">Spanish 🇪🇸</option>
+                <option value="French">French 🇫🇷</option>
+                <option value="Yoruba">Yoruba 🇳🇬</option>
+              </select>
+              <div className="muted" style={{ fontSize: '12px', marginTop: '6px' }}>
+                Select the language for text-to-speech narration
+              </div>
             </div>
           </div>
 
@@ -583,7 +654,7 @@ export default function VideoGenerator() {
         {videoUrl && (
           <div className="hero-card" style={{ padding: '32px', marginBottom: '30px' }}>
             <h3 style={{ fontSize: '20px', marginBottom: '20px', textAlign: 'center' }}>
-              Your Generated Video
+              ✅ Your Generated Video
             </h3>
             
             {/* Video Player */}
@@ -593,15 +664,41 @@ export default function VideoGenerator() {
               borderRadius: '12px',
               overflow: 'hidden',
               background: '#000',
-              marginBottom: '20px'
+              marginBottom: '20px',
+              position: 'relative'
             }}>
               <video
+                key={videoUrl}
                 controls
+                autoPlay
                 style={{ width: '100%', display: 'block' }}
                 src={videoUrl}
+                onError={(e) => {
+                  console.error('Video load error:', e);
+                  setError('Failed to load video. The video file may not exist yet.');
+                }}
+                onLoadStart={() => console.log('🎬 Video loading:', videoUrl)}
+                onLoadedData={() => console.log('✅ Video loaded successfully')}
               >
                 Your browser does not support the video tag.
               </video>
+            </div>
+
+            {/* Video Info */}
+            <div style={{
+              padding: '12px 16px',
+              background: 'var(--glass)',
+              borderRadius: '8px',
+              marginBottom: '16px',
+              fontSize: '13px'
+            }}>
+              <div style={{ marginBottom: '4px' }}>
+                <strong>Video URL:</strong>{' '}
+                <code style={{ color: 'var(--accent)', fontSize: '12px' }}>{videoUrl}</code>
+              </div>
+              <div className="muted">
+                💡 Tip: To use a real video, place an MP4 file named "sample-video.mp4" in the public/videos folder
+              </div>
             </div>
 
             {/* Video Actions */}
