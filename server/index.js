@@ -7,8 +7,9 @@ require('dotenv').config();
 console.log('Starting Learn Lite backend...');
 const fs = require('fs');
 const path = require('path');
+const envFilePath = path.join(__dirname, '.env');
 
-if (!fs.existsSync('.env')) {
+if (!fs.existsSync(envFilePath)) {
   console.warn('⚠️  Warning: .env file not found. Creating one with defaults...');
 }
 
@@ -1104,6 +1105,28 @@ app.get('/api/health', (req, res) => {
     environment: NODE_ENV
   });
 });
+
+const frontendDistPath = path.join(__dirname, '..', 'dist');
+const frontendIndexPath = path.join(frontendDistPath, 'index.html');
+
+if (NODE_ENV === 'production') {
+  if (fs.existsSync(frontendDistPath)) {
+    app.use(express.static(frontendDistPath, { maxAge: '1y', index: false }));
+
+    app.get(/^(?!\/api\/).*/, (req, res) => {
+      if (fs.existsSync(frontendIndexPath)) {
+        return res.sendFile(frontendIndexPath);
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: 'Frontend build not found. Ensure the client build runs before start.'
+      });
+    });
+  } else {
+    console.warn('⚠️  Production frontend build directory not found. SPA routes will not be served.');
+  }
+}
 
 app.get('/api/home-media', (req, res) => {
   const items = loadHomeMediaItems()
