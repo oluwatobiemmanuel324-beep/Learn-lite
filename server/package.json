@@ -7,7 +7,8 @@
     "start": "node index.js",
     "dev": "node index.js",
     "migrate": "npx prisma migrate dev",
-    "seed": "node prisma/seed.js"
+    "seed": "node prisma/seed.js",
+    "seed:test": "node prisma/seed-test.js"
   },
   "keywords": [],
   "author": "",
@@ -26,6 +27,8 @@
     "express-validator": "^7.0.0",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.0",
+    "multer": "^2.1.1",
+    "node-cron": "^4.2.1",
     "nodemailer": "^8.0.1",
     "prisma": "^6.19.2",
     "validator": "^13.15.26",

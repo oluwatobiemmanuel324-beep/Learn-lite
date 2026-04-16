@@ -24,17 +24,24 @@ const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 const validator = require('validator');
 const disposableEmailDomains = require('disposable-email-domains');
+const multer = require('multer');
 const { PrismaClient } = require('@prisma/client');
-const { sendWelcomeEmail } = require('./utils/email');
+const { sendWelcomeEmail, sendPasswordResetOtpEmail } = require('./utils/email');
+const { startWeeklyFinancialReportCron } = require('./cron/reports');
 
 // CONFIGURATION
 // ========================================
 
 const PORT = process.env.PORT || 4000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
-const PUBLIC_URL = 'https://disallowable-untamable-glen.ngrok-free.dev';
+const FRONTEND_URL = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+const PUBLIC_URL = process.env.PUBLIC_URL || process.env.BACKEND_PUBLIC_URL || 'http://localhost:4000';
+const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || `${FRONTEND_URL}/generate-video`;
 const HEYGEN_API_VERSION = process.env.HEYGEN_API_VERSION || 'v1';
 const HEYGEN_BASE_URL = `https://api.heygen.com/${HEYGEN_API_VERSION}`;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
 
 let JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -60,6 +67,10 @@ if (!HEYGEN_API_KEY) {
   console.warn('⚠️  HEYGEN_API_KEY not set. Video generation will use sample videos.');
 }
 
+if (!GEMINI_API_KEY) {
+  console.warn('⚠️  GEMINI_API_KEY not set. AI chat and quiz generation will be unavailable.');
+}
+
 // Log Paystack key status (without revealing actual keys)
 console.log(`🔐 Paystack Public Key: ${PAYSTACK_PUBLIC_KEY ? '✓ Configured' : '✗ Not configured'}`);
 console.log(`🔐 Paystack Secret Key: ${PAYSTACK_SECRET_KEY ? '✓ Configured' : '✗ Not configured'}`);
@@ -71,13 +82,18 @@ if (paystackKeysLoaded) {
   console.log('🔐 Paystack Keys Loaded: NO.');
 }
 
+const quizUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 6 * 1024 * 1024 }
+});
+
 const app = express();
 
 // ========================================
 // CORS CONFIGURATION - MUST BE FIRST
 // ========================================
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+const FRONTEND_ORIGIN = FRONTEND_URL;
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || FRONTEND_ORIGIN)
   .split(',')
   .map(s => s.trim())
@@ -166,6 +182,54 @@ if (!fs.existsSync(videosPath)) {
 app.use('/videos', express.static(videosPath));
 console.log('📹 Serving videos from:', videosPath);
 
+const homeMediaPath = path.join(__dirname, '..', 'public', 'home-media');
+const homeMediaManifestPath = path.join(homeMediaPath, 'manifest.json');
+
+if (!fs.existsSync(homeMediaPath)) {
+  fs.mkdirSync(homeMediaPath, { recursive: true });
+  console.log('🖼️ Created homepage media directory:', homeMediaPath);
+}
+
+if (!fs.existsSync(homeMediaManifestPath)) {
+  fs.writeFileSync(homeMediaManifestPath, JSON.stringify({ items: [] }, null, 2), 'utf8');
+}
+
+app.use('/home-media', express.static(homeMediaPath));
+console.log('🖼️ Serving homepage media from:', homeMediaPath);
+
+function loadHomeMediaItems() {
+  try {
+    const raw = fs.readFileSync(homeMediaManifestPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.items)) {
+      return [];
+    }
+    return parsed.items;
+  } catch (err) {
+    console.warn('Unable to read homepage media manifest:', err.message);
+    return [];
+  }
+}
+
+function saveHomeMediaItems(items) {
+  fs.writeFileSync(homeMediaManifestPath, JSON.stringify({ items }, null, 2), 'utf8');
+}
+
+function sanitizeUploadFileName(fileName = '') {
+  const ext = path.extname(String(fileName)).toLowerCase();
+  const base = path.basename(String(fileName), ext).replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 60);
+  const safeBase = base || 'homepage-media';
+  const safeExt = ext && ext.length <= 10 ? ext : '';
+  return `${safeBase}${safeExt}`;
+}
+
+function inferMediaTypeFromMime(mimeType = '') {
+  const normalized = String(mimeType || '').toLowerCase();
+  if (normalized.startsWith('image/')) return 'image';
+  if (normalized.startsWith('video/')) return 'video';
+  return 'unknown';
+}
+
 // ========================================
 // RATE LIMITING
 // ========================================
@@ -177,6 +241,41 @@ const apiLimiter = rateLimit({
   legacyHeaders: false
 });
 app.use('/api/', apiLimiter);
+
+app.use('/api/', (req, res, next) => {
+  if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    return next();
+  }
+
+  const inputs = [req.body, req.query, req.params];
+  for (const input of inputs) {
+    const verdict = inspectPayload(input);
+    if (!verdict.ok) {
+      return res.status(400).json({
+        success: false,
+        error: verdict.reason || 'Rejected suspicious payload'
+      });
+    }
+  }
+
+  return next();
+});
+
+const forgotRequestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many OTP requests. Please try again later.' }
+});
+
+const forgotVerifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many reset attempts. Please try again later.' }
+});
 
 // ========================================
 // DATABASE SETUP
@@ -197,6 +296,284 @@ const MANAGED_ACCOUNT_ROLE_MAP = {
 
 const STAFF_ROLES = ['FINANCE_CONTROLLER', 'ACADEMIC_REGISTRAR', 'OPS_MODERATOR', 'SOCIAL_MEDIA_CONTROLLER', 'ROOT_ADMIN'];
 const ALL_ADMIN_ROLES = ['SYSTEM_OWNER', 'ROOT_ADMIN', 'ADMIN', 'FINANCE_CONTROLLER', 'ACADEMIC_REGISTRAR', 'OPS_MODERATOR', 'SOCIAL_MEDIA_CONTROLLER'];
+const ROOT_EQUIVALENT_ROLES = ['ROOT', 'SYSTEM_OWNER', 'ROOT_ADMIN'];
+const passwordResetStore = new Map();
+const PASSWORD_RESET_OTP_TTL_MS = 10 * 60 * 1000;
+const PASSWORD_RESET_MAX_VERIFY_ATTEMPTS = 5;
+const PASSWORD_RESET_SESSION_TTL_MS = 15 * 60 * 1000;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [email, payload] of passwordResetStore.entries()) {
+    if (!payload?.expiresAt || payload.expiresAt <= now) {
+      passwordResetStore.delete(email);
+    }
+  }
+}, 60 * 1000);
+
+function normalizeEmailAddress(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function generatePasswordResetOtp() {
+  return String(crypto.randomInt(100000, 1000000));
+}
+
+function hashPasswordResetOtp(email, otp) {
+  return crypto
+    .createHash('sha256')
+    .update(`${normalizeEmailAddress(email)}:${String(otp)}:${JWT_SECRET}`)
+    .digest('hex');
+}
+
+function storePasswordResetOtp({ email, userId, username }) {
+  const otp = generatePasswordResetOtp();
+  const expiresAt = Date.now() + PASSWORD_RESET_OTP_TTL_MS;
+  const record = {
+    userId,
+    username,
+    otpHash: hashPasswordResetOtp(email, otp),
+    expiresAt,
+    attempts: 0,
+    createdAt: Date.now()
+  };
+
+  passwordResetStore.set(normalizeEmailAddress(email), record);
+  return { otp, expiresAt };
+}
+
+function getPasswordResetRecord(email) {
+  const key = normalizeEmailAddress(email);
+  const record = passwordResetStore.get(key);
+
+  if (!record) return null;
+  if (record.expiresAt <= Date.now()) {
+    passwordResetStore.delete(key);
+    return null;
+  }
+
+  return record;
+}
+
+function clearPasswordResetRecord(email) {
+  passwordResetStore.delete(normalizeEmailAddress(email));
+}
+
+function createPasswordResetSessionToken({ email, userId }) {
+  return jwt.sign(
+    {
+      email: normalizeEmailAddress(email),
+      userId,
+      purpose: 'password-reset'
+    },
+    JWT_SECRET,
+    { expiresIn: '15m' }
+  );
+}
+
+function verifyPasswordResetSessionToken(token) {
+  const decoded = jwt.verify(token, JWT_SECRET);
+  if (decoded?.purpose !== 'password-reset') {
+    throw new Error('Invalid reset token purpose');
+  }
+  return decoded;
+}
+
+function hasMaliciousPattern(value) {
+  if (typeof value !== 'string') return false;
+  return /<\s*script|<\s*\/\s*script|javascript\s*:|data\s*:\s*text\/html|onerror\s*=|onload\s*=|__proto__|constructor\s*\(/i.test(value);
+}
+
+function inspectPayload(input, depth = 0) {
+  if (depth > 12) {
+    return { ok: false, reason: 'Payload nesting too deep' };
+  }
+
+  if (input == null) return { ok: true };
+
+  if (typeof input === 'string') {
+    if (input.length > 50000) {
+      return { ok: false, reason: 'String payload too large' };
+    }
+    if (hasMaliciousPattern(input)) {
+      return { ok: false, reason: 'Potentially malicious string detected' };
+    }
+    return { ok: true };
+  }
+
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      const verdict = inspectPayload(item, depth + 1);
+      if (!verdict.ok) return verdict;
+    }
+    return { ok: true };
+  }
+
+  if (typeof input === 'object') {
+    const keys = Object.keys(input);
+    if (keys.length > 1000) {
+      return { ok: false, reason: 'Too many object keys in payload' };
+    }
+
+    for (const key of keys) {
+      if (['__proto__', 'prototype', 'constructor'].includes(key)) {
+        return { ok: false, reason: 'Prototype pollution key rejected' };
+      }
+
+      const verdict = inspectPayload(input[key], depth + 1);
+      if (!verdict.ok) return verdict;
+    }
+
+    return { ok: true };
+  }
+
+  return { ok: true };
+}
+
+function isSovereignRole(role) {
+  return ROOT_EQUIVALENT_ROLES.includes(String(role || '').toUpperCase());
+}
+
+function checkSovereign(allowedRoles = []) {
+  return (req, res, next) => {
+    if (!req.user?.userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    // Mandatory rule from requirement.
+    if (String(req.user.role || '').toUpperCase() === 'ROOT') {
+      return next();
+    }
+
+    // Compatibility with current role model.
+    if (isSovereignRole(req.user.role)) {
+      return next();
+    }
+
+    if (allowedRoles.length && allowedRoles.includes(req.user.role)) {
+      return next();
+    }
+
+    return res.status(403).json({ success: false, error: 'Forbidden: sovereign access required' });
+  };
+}
+
+function isRootMiddleware(req, res, next) {
+  if (!req.user?.userId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+
+  const role = String(req.user.role || '').toUpperCase();
+  if (role === 'ROOT' || role === 'SYSTEM_OWNER') {
+    return next();
+  }
+
+  return res.status(403).json({ success: false, error: 'Forbidden: ROOT access required' });
+}
+
+function mapActivityRoute(item) {
+  const target = String(item?.target || '').toLowerCase();
+  if (item?.action?.includes('ROLE') || item?.action?.includes('ACCOUNT') || target.includes('@')) {
+    return '/dashboard/root-admin';
+  }
+  if (item?.action?.includes('PAYMENT')) {
+    return '/dashboard/finance-controller';
+  }
+  if (item?.action?.includes('QUESTION') || item?.action?.includes('GROUP')) {
+    return '/dashboard/academic-registrar';
+  }
+  return '/dashboard/root-admin';
+}
+
+function csvEscape(value) {
+  const normalized = String(value ?? '');
+  if (/[,"\n]/.test(normalized)) {
+    return `"${normalized.replace(/"/g, '""')}"`;
+  }
+  return normalized;
+}
+
+function toCsv(rows = []) {
+  if (!rows.length) {
+    return 'timestamp,actorRole,actorEmail,action,target,details\n';
+  }
+
+  const header = ['timestamp', 'actorRole', 'actorEmail', 'action', 'target', 'details'];
+  const lines = rows.map((row) => [
+    csvEscape(new Date(row.createdAt).toISOString()),
+    csvEscape(row.actorRole || ''),
+    csvEscape(row.actorEmail || ''),
+    csvEscape(row.action || ''),
+    csvEscape(row.target || ''),
+    csvEscape(row.details || '')
+  ].join(','));
+
+  return `${header.join(',')}\n${lines.join('\n')}\n`;
+}
+
+async function getRootGlobalSettings() {
+  const latest = await prisma.staffActivity.findFirst({
+    where: { action: 'ROOT_GLOBAL_SETTINGS' },
+    orderBy: { createdAt: 'desc' },
+    select: { details: true, createdAt: true }
+  });
+
+  if (!latest?.details) {
+    return {
+      maintenanceMode: false,
+      registrationOpen: true,
+      updatedAt: new Date(0).toISOString()
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(latest.details);
+    return {
+      maintenanceMode: Boolean(parsed.maintenanceMode),
+      registrationOpen: parsed.registrationOpen !== false,
+      updatedAt: parsed.updatedAt || latest.createdAt.toISOString(),
+      updatedBy: parsed.updatedBy || null
+    };
+  } catch {
+    return {
+      maintenanceMode: false,
+      registrationOpen: true,
+      updatedAt: latest.createdAt.toISOString()
+    };
+  }
+}
+
+async function maintenanceModeGuard(req, res, next) {
+  try {
+    const settings = await getRootGlobalSettings();
+    if (!settings.maintenanceMode) return next();
+
+    const role = String(req.user?.role || '').toUpperCase();
+    if (isSovereignRole(role)) return next();
+
+    return res.status(503).json({
+      success: false,
+      error: 'System is in maintenance mode',
+      code: 'MAINTENANCE_MODE'
+    });
+  } catch {
+    return next();
+  }
+}
+
+async function registrationOpenGuard(req, res, next) {
+  try {
+    const settings = await getRootGlobalSettings();
+    if (settings.registrationOpen) return next();
+    return res.status(403).json({
+      success: false,
+      error: 'Registration is currently closed by Root Override',
+      code: 'REGISTRATION_CLOSED'
+    });
+  } catch {
+    return next();
+  }
+}
 
 function getRedirectPathForRole(role) {
   const redirectByRole = {
@@ -339,7 +716,7 @@ async function authMiddleware(req, res, next) {
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id: true, role: true, isActive: true, email: true }
+      select: { id: true, role: true, isActive: true, isSuspended: true, email: true }
     });
 
     if (!user) {
@@ -351,6 +728,14 @@ async function authMiddleware(req, res, next) {
         success: false,
         error: 'Account deactivated. Contact SYSTEM_OWNER.',
         code: 'ACCOUNT_DISABLED'
+      });
+    }
+
+    if (user.isSuspended) {
+      return res.status(403).json({
+        success: false,
+        error: 'Account is suspended by OPS_MODERATOR. Contact support.',
+        code: 'ACCOUNT_SUSPENDED'
       });
     }
 
@@ -720,6 +1105,286 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+app.get('/api/home-media', (req, res) => {
+  const items = loadHomeMediaItems()
+    .filter((item) => item?.url && (item?.type === 'image' || item?.type === 'video'))
+    .slice(0, 24);
+
+  return res.json({ success: true, items });
+});
+
+app.get('/api/internal/health/providers', authMiddleware, async (req, res) => {
+  try {
+    const report = await buildProviderHealthReport();
+    return res.json({
+      success: true,
+      summary: report.success ? 'PASS' : 'FAIL',
+      checkedAt: new Date().toISOString(),
+      checks: report.checks
+    });
+  } catch (err) {
+    console.error('Provider health endpoint error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to execute provider health checks' });
+  }
+});
+
+app.post('/api/quiz/generate', authMiddleware, maintenanceModeGuard, quizUpload.single('file'), async (req, res) => {
+  try {
+    const requestedCount = Math.max(5, Math.min(40, Number(req.body?.questionCount || 10)));
+    const difficulty = String(req.body?.difficulty || 'mixed').trim().toLowerCase();
+    const mode = String(req.body?.mode || 'exam-ready').trim().toLowerCase();
+    const sourceName = String(req.file?.originalname || req.body?.sourceFileName || 'uploaded-note').trim();
+
+    let extractedText = String(req.body?.noteText || '').trim();
+    if (!extractedText && req.file?.buffer) {
+      const mimeType = String(req.file.mimetype || '').toLowerCase();
+      if (mimeType.startsWith('text/') || mimeType.includes('json') || mimeType.includes('csv')) {
+        extractedText = req.file.buffer.toString('utf8').trim();
+      }
+    }
+
+    const truncatedSource = extractedText.slice(0, 10000);
+    const quizPrompt = [
+      'You are an exam board engine. Create a STANDARD CBT (Computer-Based Test) quiz JSON.',
+      `Generate exactly ${requestedCount} questions.`,
+      `Difficulty: ${difficulty}. Mode: ${mode}.`,
+      'Output STRICT JSON only with this shape:',
+      '{"questions":[{"id":"q-1","question":"...","options":[{"key":"A","text":"..."},{"key":"B","text":"..."},{"key":"C","text":"..."},{"key":"D","text":"..."}],"correctAnswer":"A","explanation":"...","topic":"...","difficulty":"..."}]}',
+      'Rules:',
+      '- Each question must have exactly 4 options A-D.',
+      '- correctAnswer must be one of A, B, C, D.',
+      '- Questions must be unique, clear, and exam-grade.',
+      '- Explanations should be concise (1-2 sentences).',
+      `Source note/file: ${sourceName}`,
+      truncatedSource ? `Use this source material:\n${truncatedSource}` : 'No extractable text was provided; infer quality generic study questions based on the source title.'
+    ].join('\n');
+
+    const geminiText = await callGeminiJson({
+      prompt: quizPrompt,
+      responseMimeType: 'application/json',
+      temperature: 0.35
+    });
+
+    const parsed = parseJsonFromText(geminiText);
+    const questions = normalizeCbtQuestions(parsed?.questions, requestedCount);
+
+    if (!questions.length) {
+      return res.status(502).json({
+        success: false,
+        error: 'Gemini returned unusable quiz data. Please try again.'
+      });
+    }
+
+    const quizId = `quiz-${Date.now()}-${Math.round(Math.random() * 9999)}`;
+    const quizRecord = {
+      type: 'generated_quiz',
+      quizId,
+      sourceFileName: sourceName,
+      questionCount: questions.length,
+      mode,
+      difficulty,
+      generatedBy: 'gemini',
+      generatedAt: new Date().toISOString(),
+      questions
+    };
+
+    await prisma.backup.create({
+      data: {
+        userId: req.user.userId,
+        quizzes: JSON.stringify(quizRecord)
+      }
+    });
+
+    return res.status(201).json({
+      success: true,
+      quizId,
+      sourceFileName: sourceName,
+      mode,
+      difficulty,
+      generatedBy: 'gemini',
+      questions,
+      cbtStandard: true
+    });
+  } catch (err) {
+    console.error('Quiz generation error:', err.response?.data || err.message || err);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to generate quiz from Gemini',
+      details: NODE_ENV === 'development' ? (err.response?.data || err.message) : undefined
+    });
+  }
+});
+
+app.get('/api/quiz/list', authMiddleware, async (req, res) => {
+  try {
+    const backups = await prisma.backup.findMany({
+      where: { userId: req.user.userId, quizzes: { not: null } },
+      orderBy: { timestamp: 'desc' },
+      take: 100,
+      select: { id: true, timestamp: true, quizzes: true }
+    });
+
+    const quizzes = backups
+      .map((item) => {
+        const parsed = parseJsonSafely(item.quizzes, null);
+        if (!parsed || parsed.type !== 'generated_quiz') return null;
+        return {
+          id: parsed.quizId,
+          backupId: item.id,
+          sourceFileName: parsed.sourceFileName || 'Unknown source',
+          questionCount: Number(parsed.questionCount || parsed.questions?.length || 0),
+          generatedAt: parsed.generatedAt || item.timestamp,
+          mode: parsed.mode || 'exam-ready',
+          difficulty: parsed.difficulty || 'mixed'
+        };
+      })
+      .filter(Boolean);
+
+    return res.json({ success: true, quizzes });
+  } catch (err) {
+    console.error('Quiz list error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch quiz list' });
+  }
+});
+
+app.get('/api/quiz/:id', authMiddleware, async (req, res) => {
+  try {
+    const quizId = String(req.params.id || '').trim();
+    if (!quizId) return res.status(400).json({ success: false, error: 'quizId is required' });
+
+    const backups = await prisma.backup.findMany({
+      where: { userId: req.user.userId, quizzes: { not: null } },
+      orderBy: { timestamp: 'desc' },
+      take: 150,
+      select: { id: true, timestamp: true, quizzes: true }
+    });
+
+    const match = backups.find((entry) => {
+      const parsed = parseJsonSafely(entry.quizzes, null);
+      return parsed?.type === 'generated_quiz' && parsed?.quizId === quizId;
+    });
+
+    if (!match) return res.status(404).json({ success: false, error: 'Quiz not found' });
+
+    const quiz = parseJsonSafely(match.quizzes, null);
+    return res.json({
+      success: true,
+      quiz: {
+        id: quiz.quizId,
+        sourceFileName: quiz.sourceFileName,
+        questionCount: quiz.questionCount,
+        generatedAt: quiz.generatedAt || match.timestamp,
+        mode: quiz.mode,
+        difficulty: quiz.difficulty,
+        questions: quiz.questions || []
+      }
+    });
+  } catch (err) {
+    console.error('Get quiz error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch quiz' });
+  }
+});
+
+app.post('/api/quiz/:id/attempt', authMiddleware, async (req, res) => {
+  try {
+    const quizId = String(req.params.id || '').trim();
+    const answers = req.body?.answers || {};
+
+    if (!quizId) return res.status(400).json({ success: false, error: 'quizId is required' });
+
+    const backups = await prisma.backup.findMany({
+      where: { userId: req.user.userId, quizzes: { not: null } },
+      orderBy: { timestamp: 'desc' },
+      take: 150,
+      select: { quizzes: true }
+    });
+
+    const matched = backups
+      .map((entry) => parseJsonSafely(entry.quizzes, null))
+      .find((parsed) => parsed?.type === 'generated_quiz' && parsed?.quizId === quizId);
+
+    if (!matched) return res.status(404).json({ success: false, error: 'Quiz not found' });
+
+    const questions = Array.isArray(matched.questions) ? matched.questions : [];
+    let correct = 0;
+
+    const review = questions.map((q) => {
+      const selected = String(answers[q.id] || '').trim().toUpperCase();
+      const expected = String(q.correctAnswer || '').trim().toUpperCase();
+      const isCorrect = selected && expected && selected === expected;
+      if (isCorrect) correct += 1;
+      return {
+        id: q.id,
+        selected,
+        correct: expected,
+        isCorrect
+      };
+    });
+
+    const total = questions.length;
+    const percent = total > 0 ? Math.round((correct / total) * 100) : 0;
+
+    await prisma.user.update({
+      where: { id: req.user.userId },
+      data: {
+        totalQuestionsAttempted: { increment: total },
+        totalQuestionsCorrect: { increment: correct }
+      }
+    });
+
+    await prisma.backup.create({
+      data: {
+        userId: req.user.userId,
+        quizzes: JSON.stringify({
+          type: 'quiz_attempt',
+          quizId,
+          score: correct,
+          total,
+          percent,
+          review,
+          attemptedAt: new Date().toISOString()
+        })
+      }
+    });
+
+    return res.json({ success: true, score: correct, total, percent, review });
+  } catch (err) {
+    console.error('Submit quiz attempt error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to score quiz attempt' });
+  }
+});
+
+app.delete('/api/quiz/:id', authMiddleware, async (req, res) => {
+  try {
+    const quizId = String(req.params.id || '').trim();
+    if (!quizId) return res.status(400).json({ success: false, error: 'quizId is required' });
+
+    const backups = await prisma.backup.findMany({
+      where: { userId: req.user.userId, quizzes: { not: null } },
+      orderBy: { timestamp: 'desc' },
+      take: 200,
+      select: { id: true, quizzes: true }
+    });
+
+    const idsToDelete = backups
+      .filter((entry) => {
+        const parsed = parseJsonSafely(entry.quizzes, null);
+        return parsed?.quizId === quizId;
+      })
+      .map((entry) => entry.id);
+
+    if (!idsToDelete.length) {
+      return res.status(404).json({ success: false, error: 'Quiz not found' });
+    }
+
+    await prisma.backup.deleteMany({ where: { id: { in: idsToDelete }, userId: req.user.userId } });
+    return res.json({ success: true, deletedQuizId: quizId });
+  } catch (err) {
+    console.error('Delete quiz error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete quiz' });
+  }
+});
+
 // ========================================
 // AUTH ENDPOINTS (Frontend: http://localhost:5173)
 // ========================================
@@ -777,8 +1442,177 @@ async function callHeyGenGenerateWithRetry(requestPayload, maxRetries = 3) {
   throw new Error('HeyGen retry loop exited unexpectedly');
 }
 
+function stripCodeFence(text) {
+  const normalized = String(text || '').trim();
+  if (!normalized.startsWith('```')) return normalized;
+  return normalized.replace(/^```[a-zA-Z]*\s*/, '').replace(/```$/, '').trim();
+}
+
+function parseJsonFromText(text) {
+  const cleaned = stripCodeFence(text);
+  return JSON.parse(cleaned);
+}
+
+function normalizeCbtQuestions(rawQuestions, desiredCount = 10) {
+  const questions = Array.isArray(rawQuestions) ? rawQuestions : [];
+
+  return questions
+    .map((item, idx) => {
+      const optionPool = Array.isArray(item?.options)
+        ? item.options
+        : Array.isArray(item?.choices)
+        ? item.choices
+        : [];
+
+      const options = optionPool
+        .map((opt, optIdx) => {
+          const fallbackKey = String.fromCharCode(65 + optIdx);
+          if (typeof opt === 'string') {
+            return { key: fallbackKey, text: opt.trim() };
+          }
+
+          if (opt && typeof opt === 'object') {
+            const key = String(opt.key || opt.label || fallbackKey).trim().toUpperCase();
+            const text = String(opt.text || opt.value || opt.option || '').trim();
+            return { key, text };
+          }
+
+          return { key: fallbackKey, text: String(opt || '').trim() };
+        })
+        .filter((opt) => opt.text)
+        .slice(0, 4)
+        .map((opt, optIdx) => ({
+          key: String.fromCharCode(65 + optIdx),
+          text: opt.text
+        }));
+
+      const rawCorrect = String(item?.correctAnswer || item?.correct_option || item?.answer || '').trim().toUpperCase();
+      const validKeys = options.map((opt) => opt.key);
+      const correctAnswer = validKeys.includes(rawCorrect) ? rawCorrect : validKeys[0] || 'A';
+
+      return {
+        id: String(item?.id || `q-${idx + 1}`),
+        question: String(item?.question || item?.prompt || `Question ${idx + 1}`).trim(),
+        options,
+        correctAnswer,
+        explanation: String(item?.explanation || '').trim(),
+        difficulty: String(item?.difficulty || 'mixed').trim(),
+        topic: String(item?.topic || '').trim()
+      };
+    })
+    .filter((q) => q.question && q.options.length >= 2)
+    .slice(0, Math.max(1, Number(desiredCount) || 10));
+}
+
+async function callGeminiJson({ prompt, responseMimeType = 'application/json', temperature = 0.4 }) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY not configured');
+  }
+
+  const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const response = await axios.post(
+    url,
+    {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature,
+        responseMimeType
+      }
+    },
+    {
+      timeout: 45000,
+      headers: { 'Content-Type': 'application/json' }
+    }
+  );
+
+  const text = response.data?.candidates?.[0]?.content?.parts
+    ?.map((part) => part?.text || '')
+    .join('\n')
+    .trim();
+
+  if (!text) {
+    throw new Error('Gemini returned empty response');
+  }
+
+  return text;
+}
+
+async function buildProviderHealthReport() {
+  const checks = [];
+
+  if (PAYSTACK_SECRET_KEY) {
+    try {
+      const paystackResponse = await axios.get('https://api.paystack.co/bank', {
+        timeout: 15000,
+        headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` }
+      });
+      checks.push({ provider: 'paystack', status: 'PASS', httpStatus: paystackResponse.status, message: 'Reachable and authenticated' });
+    } catch (err) {
+      checks.push({
+        provider: 'paystack',
+        status: 'FAIL',
+        httpStatus: err.response?.status || null,
+        message: err.response?.data?.message || err.message || 'Request failed'
+      });
+    }
+  } else {
+    checks.push({ provider: 'paystack', status: 'FAIL', httpStatus: null, message: 'PAYSTACK_SECRET_KEY not configured' });
+  }
+
+  if (GEMINI_API_KEY) {
+    try {
+      const geminiResponse = await axios.get(`https://generativelanguage.googleapis.com/v1/models?key=${GEMINI_API_KEY}`, {
+        timeout: 15000
+      });
+      checks.push({ provider: 'gemini', status: 'PASS', httpStatus: geminiResponse.status, message: 'Reachable and authenticated' });
+    } catch (err) {
+      checks.push({
+        provider: 'gemini',
+        status: 'FAIL',
+        httpStatus: err.response?.status || null,
+        message: err.response?.data?.error?.message || err.message || 'Request failed'
+      });
+    }
+  } else {
+    checks.push({ provider: 'gemini', status: 'FAIL', httpStatus: null, message: 'GEMINI_API_KEY not configured' });
+  }
+
+  if (HEYGEN_API_KEY) {
+    try {
+      await axios.post(
+        `${HEYGEN_BASE_URL}/video_agent/generate`,
+        { prompt: 'health-check', callback_url: `${PUBLIC_URL}/api/webhooks/heygen` },
+        {
+          timeout: 20000,
+          headers: {
+            'X-API-KEY': HEYGEN_API_KEY,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      checks.push({ provider: 'heygen', status: 'PASS', httpStatus: 200, message: 'Reachable and generation request accepted' });
+    } catch (err) {
+      const status = err.response?.status || null;
+      const statusPass = [400, 401, 402, 403, 404, 429].includes(Number(status));
+      checks.push({
+        provider: 'heygen',
+        status: statusPass ? 'PASS' : 'FAIL',
+        httpStatus: status,
+        message: err.response?.data?.error || err.response?.data?.message || err.message || 'Request failed'
+      });
+    }
+  } else {
+    checks.push({ provider: 'heygen', status: 'FAIL', httpStatus: null, message: 'HEYGEN_API_KEY not configured' });
+  }
+
+  return {
+    success: checks.every((item) => item.status === 'PASS'),
+    checks
+  };
+}
+
 // Signup: POST /api/auth/signup
-app.post('/api/auth/signup', async (req, res) => {
+app.post('/api/auth/signup', registrationOpenGuard, async (req, res) => {
   try {
     const { username, email, password } = req.body;
     const normalizedEmail = String(email || '').trim().toLowerCase();
@@ -865,6 +1699,12 @@ app.post('/api/auth/signup', async (req, res) => {
 // Login: POST /api/auth/login
 app.post('/api/auth/login', async (req, res) => {
   try {
+    // Fresh login guard: clear legacy auth cookies to prevent session ghosting.
+    res.clearCookie('token');
+    res.clearCookie('jwt');
+    res.clearCookie('learn_lite_token');
+    res.set('Cache-Control', 'no-store');
+
     const { email, password } = req.body;
     const normalizedEmail = String(email || '').trim().toLowerCase();
 
@@ -892,6 +1732,14 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
+    if (user.isSuspended) {
+      return res.status(403).json({
+        success: false,
+        error: 'This account is suspended by OPS_MODERATOR.',
+        code: 'ACCOUNT_SUSPENDED'
+      });
+    }
+
     const valid = await bcrypt.compare(password, user.password);
 
     if (!valid) {
@@ -910,6 +1758,20 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+      select: {
+        id: true,
+        idNumber: true,
+        username: true,
+        email: true,
+        role: true,
+        isActive: true,
+        isSuspended: true
+      }
+    });
+
     const token = jwt.sign(
       { userId: user.id, username: user.username, role: user.role },
       JWT_SECRET,
@@ -919,15 +1781,8 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({
       success: true,
       token,
-      user: {
-        id: user.id,
-        idNumber: user.idNumber,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        isActive: user.isActive
-      },
-      redirectPath: getRedirectPathForRole(user.role)
+      user: updatedUser,
+      redirectPath: getRedirectPathForRole(updatedUser.role)
     });
   } catch (err) {
     console.error('Login error:', err);
@@ -1012,12 +1867,168 @@ app.post('/api/auth/verify', async (req, res) => {
   }
 });
 
+// Forgot password: request OTP
+app.post('/api/auth/forgot-password/request', forgotRequestLimiter, async (req, res) => {
+  try {
+    const normalizedEmail = normalizeEmailAddress(req.body?.email);
+
+    if (!validator.isEmail(normalizedEmail)) {
+      return res.status(400).json({ success: false, error: 'Please provide a valid email address' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, username: true, email: true, isActive: true }
+    });
+
+    if (!user || !user.isActive) {
+      return res.json({
+        success: true,
+        message: 'If the account exists, a password reset OTP has been sent.'
+      });
+    }
+
+    const { otp, expiresAt } = storePasswordResetOtp({
+      email: normalizedEmail,
+      userId: user.id,
+      username: user.username
+    });
+
+    await sendPasswordResetOtpEmail({
+      email: user.email,
+      username: user.username,
+      otp,
+      expiresMinutes: Math.max(1, Math.ceil((expiresAt - Date.now()) / 60000))
+    });
+
+    return res.json({
+      success: true,
+      message: 'Password reset OTP sent successfully.'
+    });
+  } catch (err) {
+    console.error('Forgot password request error:', err);
+    return res.status(500).json({ success: false, error: 'Unable to send password reset OTP' });
+  }
+});
+
+// Forgot password: verify OTP and mint short-lived reset token
+app.post('/api/auth/forgot-password/verify', forgotVerifyLimiter, async (req, res) => {
+  try {
+    const normalizedEmail = normalizeEmailAddress(req.body?.email);
+    const otp = String(req.body?.otp || '').trim();
+
+    if (!validator.isEmail(normalizedEmail)) {
+      return res.status(400).json({ success: false, error: 'Please provide a valid email address' });
+    }
+
+    if (!/^[0-9]{6}$/.test(otp)) {
+      return res.status(400).json({ success: false, error: 'OTP must be a 6-digit code' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, username: true, email: true, isActive: true }
+    });
+
+    if (!user || !user.isActive) {
+      return res.status(400).json({ success: false, error: 'Invalid OTP or expired request' });
+    }
+
+    const record = getPasswordResetRecord(normalizedEmail);
+    if (!record) {
+      return res.status(400).json({ success: false, error: 'Invalid OTP or expired request' });
+    }
+
+    if (record.attempts >= PASSWORD_RESET_MAX_VERIFY_ATTEMPTS) {
+      clearPasswordResetRecord(normalizedEmail);
+      return res.status(429).json({ success: false, error: 'Too many invalid attempts. Please request a new OTP.' });
+    }
+
+    const expectedHash = hashPasswordResetOtp(normalizedEmail, otp);
+    const storedHash = String(record.otpHash || '');
+    const isValid = storedHash.length === expectedHash.length && crypto.timingSafeEqual(Buffer.from(storedHash), Buffer.from(expectedHash));
+
+    if (!isValid) {
+      record.attempts += 1;
+      passwordResetStore.set(normalizedEmail, record);
+      return res.status(400).json({ success: false, error: 'Invalid OTP or expired request' });
+    }
+
+    const resetToken = createPasswordResetSessionToken({ email: normalizedEmail, userId: user.id });
+    passwordResetStore.set(normalizedEmail, { ...record, verifiedAt: Date.now(), resetTokenIssuedAt: Date.now() });
+
+    return res.json({
+      success: true,
+      message: 'OTP verified successfully.',
+      resetToken,
+      expiresInSeconds: Math.floor(PASSWORD_RESET_SESSION_TTL_MS / 1000)
+    });
+  } catch (err) {
+    console.error('Forgot password verify error:', err);
+    return res.status(500).json({ success: false, error: 'Unable to verify password reset OTP' });
+  }
+});
+
+// Forgot password: complete reset with token + new password
+app.post('/api/auth/forgot-password/reset', forgotVerifyLimiter, async (req, res) => {
+  try {
+    const resetToken = String(req.body?.resetToken || '').trim();
+    const newPassword = String(req.body?.newPassword || '');
+    const confirmPassword = String(req.body?.confirmPassword || '');
+
+    if (!resetToken) {
+      return res.status(400).json({ success: false, error: 'Reset token is required' });
+    }
+
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ success: false, error: 'Passwords do not match' });
+    }
+
+    const decoded = verifyPasswordResetSessionToken(resetToken);
+    const normalizedEmail = normalizeEmailAddress(decoded.email);
+
+    const record = getPasswordResetRecord(normalizedEmail);
+    if (!record || !record.verifiedAt) {
+      return res.status(400).json({ success: false, error: 'Reset session expired. Please request a new OTP.' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true, email: true, isActive: true }
+    });
+
+    if (!user || normalizeEmailAddress(user.email) !== normalizedEmail || !user.isActive) {
+      return res.status(400).json({ success: false, error: 'Reset session is no longer valid' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: hashedPassword }
+    });
+
+    clearPasswordResetRecord(normalizedEmail);
+
+    return res.json({
+      success: true,
+      message: 'Password reset successfully. Please sign in with your new password.'
+    });
+  } catch (err) {
+    console.error('Forgot password reset error:', err);
+    return res.status(500).json({ success: false, error: 'Unable to reset password' });
+  }
+});
+
 // ========================================
 // FUEL & VIDEO ENDPOINTS (Protected)
 // ========================================
 
 // Get user fuel balance: GET /api/user/fuel
-app.get('/api/user/fuel', authMiddleware, async (req, res) => {
+app.get('/api/user/fuel', authMiddleware, maintenanceModeGuard, async (req, res) => {
   try {
     // Disable caching for fuel balance to prevent 304 Not Modified responses
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -1123,7 +2134,8 @@ app.post('/api/videos/generate', authMiddleware, fuelMiddleware, async (req, res
       // Check if HeyGen returned an error
       if (heygenResponse.data?.error) {
         console.log('[HeyGen API Error]:', heygenResponse.data.error);
-        if (heygenResponse.data.error.toLowerCase().includes('insufficient credits')) {
+        const apiErrorText = String(heygenResponse.data.error || '').toLowerCase();
+        if (/insufficient.*credit/.test(apiErrorText)) {
           return res.status(402).json({
             success: false,
             error: 'Out of HeyGen Credits'
@@ -1259,7 +2271,7 @@ app.post('/api/videos/generate', authMiddleware, fuelMiddleware, async (req, res
       }
 
       const errorText = JSON.stringify(heygenErr.response?.data || '').toLowerCase();
-      if (errorText.includes('insufficient credits')) {
+      if (errorText.includes('insufficient') && errorText.includes('credit')) {
         return res.status(402).json({
           success: false,
           error: 'Out of HeyGen Credits'
@@ -1611,6 +2623,7 @@ app.post('/api/payments/initialize', authMiddleware, async (req, res) => {
         amount: FUEL_PRICE,
         currency: 'NGN',
         reference,
+        callback_url: PAYSTACK_CALLBACK_URL,
         metadata: JSON.stringify({ userId: resolvedUserId })
       },
       {
@@ -1637,6 +2650,7 @@ app.post('/api/payments/initialize', authMiddleware, async (req, res) => {
       fuelAmount: PAYSTACK_FUEL_AMOUNT,
       reference,
       description: `Buy ${PAYSTACK_FUEL_AMOUNT} Fuel for Learn Lite`,
+      callbackUrl: PAYSTACK_CALLBACK_URL,
       authorizationUrl: paystackResponse.data.data?.authorization_url
     });
   } catch (error) {
@@ -2024,9 +3038,9 @@ app.put('/api/groups/:id/code', authMiddleware, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Admin role required for this group' });
     }
 
-    let nextCode = requestedJoinCode;
-    if (nextCode && !/^\d{6}$/.test(nextCode)) {
-      return res.status(400).json({ success: false, error: 'joinCode must be exactly 6 digits' });
+    let nextCode = requestedJoinCode ? requestedJoinCode.toUpperCase() : null;
+    if (nextCode && !/^[A-Z0-9]{6}$/.test(nextCode)) {
+      return res.status(400).json({ success: false, error: 'joinCode must be exactly 6 alphanumeric characters' });
     }
 
     if (!nextCode) {
@@ -2142,6 +3156,201 @@ app.patch('/api/groups/:id/role', authMiddleware, async (req, res) => {
   }
 });
 
+// Premium publish: save quiz payload for a class group and deduct 1 fuel
+app.post('/api/groups/:id/publish-quiz', authMiddleware, fuelMiddleware, async (req, res) => {
+  try {
+    const groupId = Number(req.params.id);
+    const requesterId = getRequesterUserId(req);
+    const title = String(req.body?.title || 'Untitled Quiz').trim().slice(0, 120);
+    const sourceNote = req.body?.sourceNote ? String(req.body.sourceNote).trim().slice(0, 180) : null;
+    const payloadQuestions = Array.isArray(req.body?.questions) ? req.body.questions : [];
+
+    if (!Number.isFinite(groupId)) {
+      return res.status(400).json({ success: false, error: 'Invalid group id' });
+    }
+
+    if (!Number.isFinite(requesterId)) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const { group, membership } = await getGroupAndMembership(groupId, requesterId);
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found' });
+    }
+
+    if (!membership) {
+      return res.status(403).json({ success: false, error: 'You are not a member of this group' });
+    }
+
+    if (membership.role !== 'ADMIN') {
+      return res.status(403).json({ success: false, error: 'Only group admins can publish quizzes' });
+    }
+
+    if (!payloadQuestions.length) {
+      return res.status(400).json({ success: false, error: 'questions is required and must be a non-empty array' });
+    }
+
+    const sanitizedQuestions = payloadQuestions.slice(0, 100).map((question, index) => {
+      const prompt = String(
+        question?.prompt || question?.question || question?.text || `Question ${index + 1}`
+      ).trim().slice(0, 500);
+
+      const options = Array.isArray(question?.options)
+        ? question.options.map((option) => String(option).trim().slice(0, 300)).filter(Boolean).slice(0, 6)
+        : [];
+
+      const correctIndex = Number.isInteger(question?.correctIndex) ? question.correctIndex : 0;
+
+      return {
+        id: String(question?.id || `q-${index + 1}`),
+        prompt,
+        options,
+        correctIndex,
+        explanation: question?.explanation ? String(question.explanation).slice(0, 600) : null
+      };
+    });
+
+    if (req.userFuel == null || req.userFuel <= 0) {
+      return res.status(402).json({ success: false, error: 'Insufficient fuel' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: requesterId },
+      data: { fuelBalance: { decrement: 1 } },
+      select: { fuelBalance: true }
+    });
+
+    const publication = {
+      type: 'group_quiz_publication',
+      publishedAt: new Date().toISOString(),
+      groupId,
+      groupName: group.name,
+      publishedById: requesterId,
+      title,
+      sourceNote,
+      questions: sanitizedQuestions
+    };
+
+    const backup = await prisma.backup.create({
+      data: {
+        userId: requesterId,
+        quizzes: JSON.stringify(publication)
+      },
+      select: { id: true, timestamp: true }
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Quiz published to class group',
+      group: { id: group.id, name: group.name, joinCode: group.joinCode },
+      publication: {
+        id: backup.id,
+        timestamp: backup.timestamp,
+        title,
+        questionCount: sanitizedQuestions.length
+      },
+      fuelUsed: 1,
+      fuelRemaining: updatedUser.fuelBalance
+    });
+  } catch (err) {
+    console.error('Publish group quiz error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to publish quiz' });
+  }
+});
+
+// Admin-only: publish a generated quiz into a class group (costs 1 fuel)
+app.post('/api/groups/:id/publish-quiz', authMiddleware, async (req, res) => {
+  try {
+    const groupId = Number(req.params.id);
+    const requesterId = getRequesterUserId(req);
+    const quizPayload = req.body?.quiz || req.body;
+    const quizTitle = String(req.body?.title || 'Class Quiz').trim().slice(0, 120);
+
+    if (!Number.isFinite(groupId)) {
+      return res.status(400).json({ success: false, error: 'Invalid group id' });
+    }
+
+    if (!Number.isFinite(requesterId)) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const { group, membership } = await getGroupAndMembership(groupId, requesterId);
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Group not found' });
+    }
+
+    if (!membership || membership.role !== 'ADMIN') {
+      return res.status(403).json({ success: false, error: 'Only group admins can publish quizzes' });
+    }
+
+    const questions = Array.isArray(quizPayload?.questions) ? quizPayload.questions : [];
+    if (!questions.length) {
+      return res.status(400).json({ success: false, error: 'Quiz must contain at least one question' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: requesterId },
+      select: { id: true, fuelBalance: true }
+    });
+
+    if (!user) {
+      return res.status(401).json({ success: false, error: 'Session is no longer valid. Please log in again.' });
+    }
+
+    if ((user.fuelBalance || 0) <= 0) {
+      return res.status(402).json({
+        success: false,
+        error: 'Insufficient fuel. Add fuel to publish this quiz to your class group.',
+        fuelRequired: 1,
+        fuelAvailable: user.fuelBalance || 0
+      });
+    }
+
+    const publicationRecord = {
+      type: 'GROUP_PUBLISHED_QUIZ',
+      title: quizTitle,
+      group: {
+        id: group.id,
+        name: group.name,
+        joinCode: group.joinCode
+      },
+      publisherId: requesterId,
+      publishedAt: new Date().toISOString(),
+      quiz: {
+        ...quizPayload,
+        questionCount: questions.length
+      }
+    };
+
+    const [updatedUser, backup] = await prisma.$transaction([
+      prisma.user.update({
+        where: { id: requesterId },
+        data: { fuelBalance: { decrement: 1 } },
+        select: { fuelBalance: true }
+      }),
+      prisma.backup.create({
+        data: {
+          userId: requesterId,
+          quizzes: JSON.stringify(publicationRecord)
+        },
+        select: { id: true, timestamp: true }
+      })
+    ]);
+
+    return res.status(201).json({
+      success: true,
+      message: `Quiz published to ${group.name}`,
+      publicationId: backup.id,
+      publishedAt: backup.timestamp,
+      fuelRemaining: updatedUser.fuelBalance,
+      questionCount: questions.length
+    });
+  } catch (err) {
+    console.error('Publish group quiz error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to publish quiz' });
+  }
+});
+
 // ========================================
 // AI ASSISTANT ENDPOINTS (Protected)
 // ========================================
@@ -2184,22 +3393,34 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
       });
     }
 
-    // ========================================
-    // PLACEHOLDER: Mock AI Response
-    // TODO: Replace with actual Gemini API call
-    // ========================================
-    
-    const aiResponse = "Hey there! I'm @learnlite, your study companion. How can I help you learn today? Ask me anything about your classwork, and I'll do my best to help! 📚";
+    const cleanMessage = String(message || '').replace(/@learnlite/ig, '').trim();
+    if (!cleanMessage) {
+      return res.status(400).json({ success: false, error: 'Please include a message after @learnlite' });
+    }
+
+    const prompt = [
+      'You are Learn Lite AI tutor for CBT exam preparation.',
+      'Be concise, accurate, and practical for students.',
+      'Provide short steps, examples, and memory hints where useful.',
+      `Group context id: ${groupId}`,
+      `Student message: ${cleanMessage}`
+    ].join('\n');
+
+    const aiResponse = await callGeminiJson({
+      prompt,
+      responseMimeType: 'text/plain',
+      temperature: 0.55
+    });
 
     res.json({
       success: true,
       message: aiResponse,
-      isAIMock: true,
-      note: 'This is a mock response. Real Gemini API integration coming soon.'
+      provider: 'gemini',
+      isAIMock: false
     });
 
   } catch (err) {
-    console.error('AI chat error:', err);
+    console.error('AI chat error:', err.response?.data || err.message || err);
     res.status(500).json({ success: false, error: 'Server error' });
   }
 });
@@ -2272,6 +3493,37 @@ function systemOwnerMiddleware(req, res, next) {
   }
 
   next();
+}
+
+async function getUserByIdForProtection(userId) {
+  return prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, username: true, role: true }
+  });
+}
+
+async function getUserByEmailForProtection(email) {
+  return prisma.user.findUnique({
+    where: { email: String(email || '').trim().toLowerCase() },
+    select: { id: true, email: true, username: true, role: true }
+  });
+}
+
+function assertNotSovereignTarget(targetUser) {
+  if (!targetUser) {
+    const err = new Error('User not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const targetRole = String(targetUser.role || '').toUpperCase();
+  if (targetRole === 'ROOT' || targetRole === 'SYSTEM_OWNER') {
+    const err = new Error('Sovereign accounts cannot be modified by subordinates');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  return targetUser;
 }
 
 // Get all users: GET /api/admin/users
@@ -2438,6 +3690,60 @@ app.get('/api/admin/owner/overview', authMiddleware, requireRoles(['SYSTEM_OWNER
   }
 });
 
+// SYSTEM_OWNER audit logs with pagination (Smart Audit Feed)
+app.get('/api/admin/owner/audit-logs', authMiddleware, requireRoles(['SYSTEM_OWNER']), async (req, res) => {
+  try {
+    const page = parseInt(req.query.page || '1', 10);
+    const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+    const filterAction = req.query.action ? String(req.query.action).trim() : null;
+
+    const offset = (page - 1) * limit;
+
+    const where = {};
+    if (filterAction) {
+      where.action = { contains: filterAction, mode: 'insensitive' };
+    }
+
+    const [logs, total] = await Promise.all([
+      prisma.staffActivity.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+        select: {
+          id: true,
+          actorId: true,
+          actorEmail: true,
+          actorRole: true,
+          action: true,
+          target: true,
+          details: true,
+          createdAt: true
+        }
+      }),
+      prisma.staffActivity.count({ where })
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    res.json({
+      success: true,
+      logs,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1
+      }
+    });
+  } catch (err) {
+    console.error('Audit logs error:', err);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
 // FINANCE_CONTROLLER workplace summary
 app.get('/api/admin/finance/workplace', authMiddleware, requireRoles(['SYSTEM_OWNER', 'FINANCE_CONTROLLER']), async (req, res) => {
   try {
@@ -2491,17 +3797,207 @@ app.get('/api/admin/finance/workplace', authMiddleware, requireRoles(['SYSTEM_OW
       .filter((item) => item.daysRemaining >= 0 && item.daysRemaining <= 3)
       .sort((a, b) => a.daysRemaining - b.daysRemaining);
 
+    const successfulByStatus = payments.filter((item) => item.status === 'success');
+    const amountValues = successfulByStatus.map((item) => Number(item.amount || 0));
+    const avgAmount = amountValues.length
+      ? amountValues.reduce((sum, amount) => sum + amount, 0) / amountValues.length
+      : 0;
+    const anomalyThresholdHigh = avgAmount * 1.8;
+    const anomalyThresholdLow = avgAmount * 0.2;
+    const anomalyTransactions = successfulByStatus
+      .filter((item) => {
+        const amount = Number(item.amount || 0);
+        if (!Number.isFinite(amount) || avgAmount <= 0) return false;
+        return amount >= anomalyThresholdHigh || amount <= anomalyThresholdLow;
+      })
+      .slice(0, 20)
+      .map((item) => ({
+        reference: item.reference,
+        amount: Number(item.amount || 0),
+        fuelAdded: Number(item.fuelAdded || 0),
+        status: item.status,
+        createdAt: item.createdAt,
+        severity: Number(item.amount || 0) >= anomalyThresholdHigh ? 'HIGH' : 'LOW'
+      }));
+
+    const paymentsByCategory = [
+      {
+        category: 'Successful Transactions',
+        totalAmount: successfulByStatus.reduce((sum, item) => sum + Number(item.amount || 0), 0),
+        count: successfulByStatus.length
+      },
+      {
+        category: 'Pending Transactions',
+        totalAmount: payments.filter((item) => item.status === 'pending').reduce((sum, item) => sum + Number(item.amount || 0), 0),
+        count: payments.filter((item) => item.status === 'pending').length
+      },
+      {
+        category: 'Failed Transactions',
+        totalAmount: payments.filter((item) => item.status === 'failed').reduce((sum, item) => sum + Number(item.amount || 0), 0),
+        count: payments.filter((item) => item.status === 'failed').length
+      }
+    ];
+
+    const proposedDisbursements = await prisma.proposedDisbursement.findMany({
+      where: {
+        OR: [
+          { createdById: req.user.userId },
+          { status: 'PENDING' }
+        ]
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 25
+    });
+
     return res.json({
       success: true,
       workplace: {
         totalRevenue,
         payments,
         expiringSubscriptions,
-        expiringSoonCount: expiringSubscriptions.length
+        expiringSoonCount: expiringSubscriptions.length,
+        cashFlow: {
+          byCategory: paymentsByCategory,
+          averageSuccessfulAmount: avgAmount,
+          anomalyThresholdHigh,
+          anomalyThresholdLow,
+          anomalies: anomalyTransactions
+        },
+        budgetVsActual: [
+          { department: 'Academic', budget: 300000, actual: Math.round(totalRevenue * 0.32) },
+          { department: 'Operations', budget: 220000, actual: Math.round(totalRevenue * 0.28) },
+          { department: 'Marketing', budget: 180000, actual: Math.round(totalRevenue * 0.18) },
+          { department: 'Infrastructure', budget: 260000, actual: Math.round(totalRevenue * 0.22) }
+        ],
+        proposedDisbursements
       }
     });
   } catch (err) {
     console.error('Finance workplace error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/admin/finance/allocation-requests', authMiddleware, requireRoles(['SYSTEM_OWNER', 'FINANCE_CONTROLLER']), async (req, res) => {
+  try {
+    const sourcePool = String(req.body?.sourcePool || '').trim();
+    const destinationDepartment = String(req.body?.destinationDepartment || '').trim();
+    const justification = String(req.body?.justification || '').trim();
+    const requestedAmount = Number(req.body?.requestedAmount || 0);
+
+    if (!sourcePool || !destinationDepartment || !justification) {
+      return res.status(400).json({ success: false, error: 'sourcePool, destinationDepartment and justification are required' });
+    }
+
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+      return res.status(400).json({ success: false, error: 'requestedAmount must be greater than zero' });
+    }
+
+    const created = await prisma.proposedDisbursement.create({
+      data: {
+        sourcePool,
+        destinationDepartment,
+        justification,
+        requestedAmount,
+        status: 'PENDING',
+        createdById: req.user.userId,
+        createdByRole: req.user.role,
+        createdByEmail: req.user.email
+      }
+    });
+
+    await logStaffActivity({
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      action: 'FINCON_PROPOSED_DISBURSEMENT',
+      target: `${destinationDepartment}#${created.id}`,
+      details: `Proposed ${requestedAmount} from ${sourcePool} to ${destinationDepartment}`
+    });
+
+    return res.json({ success: true, proposal: created });
+  } catch (err) {
+    console.error('Create allocation request error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/admin/finance/proposed-disbursements', authMiddleware, requireRoles(['SYSTEM_OWNER', 'FINANCE_CONTROLLER']), async (req, res) => {
+  try {
+    const proposals = await prisma.proposedDisbursement.findMany({
+      where: req.user.role === 'FINANCE_CONTROLLER' ? { createdById: req.user.userId } : undefined,
+      orderBy: { createdAt: 'desc' },
+      take: 100
+    });
+
+    return res.json({ success: true, proposals });
+  } catch (err) {
+    console.error('Get proposed disbursements error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/admin/finance/activity-export.csv', authMiddleware, requireRoles(['SYSTEM_OWNER', 'FINANCE_CONTROLLER']), async (req, res) => {
+  try {
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - 7);
+
+    const activities = await prisma.staffActivity.findMany({
+      where: {
+        createdAt: { gte: fromDate },
+        OR: [
+          { action: { contains: 'PAYMENT' } },
+          { action: { contains: 'FINCON' } },
+          { action: { contains: 'DISBURSEMENT' } }
+        ]
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const csv = toCsv(activities);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="financial-activity-weekly.csv"');
+    return res.status(200).send(csv);
+  } catch (err) {
+    console.error('Finance activity export error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/admin/finance/activity-export.pdf', authMiddleware, requireRoles(['SYSTEM_OWNER', 'FINANCE_CONTROLLER']), async (req, res) => {
+  try {
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - 7);
+
+    const activities = await prisma.staffActivity.findMany({
+      where: {
+        createdAt: { gte: fromDate },
+        OR: [
+          { action: { contains: 'PAYMENT' } },
+          { action: { contains: 'FINCON' } },
+          { action: { contains: 'DISBURSEMENT' } }
+        ]
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 300
+    });
+
+    const lines = activities.map((item) => {
+      const timestamp = new Date(item.createdAt).toISOString();
+      return `${timestamp} | ${item.actorRole} | ${item.actorEmail} | ${item.action} | ${item.target || ''} | ${item.details || ''}`;
+    });
+
+    const report = [
+      'Learn Lite Financial Activity Report (Last 7 Days)',
+      `Generated: ${new Date().toISOString()}`,
+      '',
+      ...lines
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="financial-activity-weekly.pdf"');
+    return res.status(200).send(Buffer.from(report, 'utf-8'));
+  } catch (err) {
+    console.error('Finance PDF export error:', err);
     return res.status(500).json({ success: false, error: 'Server error' });
   }
 });
@@ -2532,18 +4028,177 @@ app.get('/api/admin/academic/workplace', authMiddleware, requireRoles(['SYSTEM_O
   }
 });
 
+app.post('/api/admin/academic/questions/bulk-upload', authMiddleware, requireRoles(['SYSTEM_OWNER', 'ACADEMIC_REGISTRAR']), async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+
+    if (!rows.length) {
+      return res.status(400).json({ success: false, error: 'rows array is required' });
+    }
+
+    if (rows.length > 2000) {
+      return res.status(400).json({ success: false, error: 'Maximum 2000 rows allowed per upload' });
+    }
+
+    const normalizeDifficulty = (value) => {
+      const raw = String(value || 'medium').trim().toLowerCase();
+      if (['easy', 'medium', 'hard'].includes(raw)) return raw;
+      return 'medium';
+    };
+
+    const toQuestionPayload = (row) => {
+      const optionA = String(row.optionA || '').trim();
+      const optionB = String(row.optionB || '').trim();
+      const optionC = String(row.optionC || '').trim();
+      const optionD = String(row.optionD || '').trim();
+      const rawAnswer = String(row.correctAnswer || '').trim();
+
+      if (!row.question || !optionA || !optionB || !optionC || !optionD || !rawAnswer) {
+        return { valid: false, reason: 'Missing required fields (question/options/correctAnswer)' };
+      }
+
+      const answerUpper = rawAnswer.toUpperCase();
+      const answerByLabel = ['A', 'B', 'C', 'D'].includes(answerUpper)
+        ? answerUpper
+        : null;
+
+      let finalAnswer = answerByLabel;
+      if (!finalAnswer) {
+        if (rawAnswer === optionA) finalAnswer = 'A';
+        else if (rawAnswer === optionB) finalAnswer = 'B';
+        else if (rawAnswer === optionC) finalAnswer = 'C';
+        else if (rawAnswer === optionD) finalAnswer = 'D';
+      }
+
+      if (!finalAnswer) {
+        return { valid: false, reason: 'correctAnswer must be A/B/C/D or match one option text' };
+      }
+
+      const failRate = Number(row.failRate || 0);
+
+      return {
+        valid: true,
+        data: {
+          question: String(row.question).trim(),
+          optionA,
+          optionB,
+          optionC,
+          optionD,
+          correctAnswer: finalAnswer,
+          difficulty: normalizeDifficulty(row.difficulty),
+          topic: row.topic ? String(row.topic).trim() : null,
+          failRate: Number.isFinite(failRate) ? Math.max(0, Math.min(1, failRate)) : 0,
+          createdById: req.user.userId
+        }
+      };
+    };
+
+    const acceptedRows = [];
+    const rejectedRows = [];
+
+    rows.forEach((row, index) => {
+      const parsed = toQuestionPayload(row || {});
+      if (!parsed.valid) {
+        rejectedRows.push({ row: index + 1, reason: parsed.reason });
+        return;
+      }
+      acceptedRows.push(parsed.data);
+    });
+
+    if (!acceptedRows.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid rows found in upload',
+        summary: {
+          accepted: 0,
+          rejected: rejectedRows.length,
+          rejectedRows: rejectedRows.slice(0, 30)
+        }
+      });
+    }
+
+    await prisma.questionBank.createMany({ data: acceptedRows });
+
+    await logStaffActivity({
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      action: 'ACADEMIC_BULK_UPLOAD_QUESTIONS',
+      target: `${acceptedRows.length} questions`,
+      details: `Accepted ${acceptedRows.length}, rejected ${rejectedRows.length}`
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: `Imported ${acceptedRows.length} questions successfully.`,
+      summary: {
+        accepted: acceptedRows.length,
+        rejected: rejectedRows.length,
+        rejectedRows: rejectedRows.slice(0, 30)
+      }
+    });
+  } catch (err) {
+    console.error('Academic bulk upload error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
 // OPS_MODERATOR workplace summary
 app.get('/api/admin/ops/workplace', authMiddleware, requireRoles(['SYSTEM_OWNER', 'OPS_MODERATOR']), async (req, res) => {
   try {
     const totalUsers = await prisma.user.count();
     const activeUsers = await prisma.user.count({ where: { isActive: true } });
     const disabledUsers = await prisma.user.count({ where: { isActive: false } });
+    const suspendedUsers = await prisma.user.count({ where: { isSuspended: true } });
 
     const recentUsers = await prisma.user.findMany({
       orderBy: { createdAt: 'desc' },
       take: 50,
-      select: { id: true, username: true, email: true, role: true, isActive: true, createdAt: true }
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        isActive: true,
+        isSuspended: true,
+        createdAt: true,
+        lastLoginAt: true,
+      }
     });
+
+    const inactiveUsers = await prisma.user.findMany({
+      where: {
+        createdAt: {
+          lte: new Date(Date.now() - (48 * 60 * 60 * 1000))
+        }
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 60,
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        isSuspended: true,
+        lastLoginAt: true,
+        createdAt: true
+      }
+    });
+
+    const dayLabels = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      dayLabels.push(d.toISOString().slice(0, 10));
+    }
+
+    const retentionByDay = dayLabels.map((day) => ({
+      day,
+      atRiskUsers: inactiveUsers.filter((user) => {
+        const userDay = new Date(user.lastLoginAt || user.createdAt).toISOString().slice(0, 10);
+        return userDay === day;
+      }).length
+    }));
 
     return res.json({
       success: true,
@@ -2551,11 +4206,278 @@ app.get('/api/admin/ops/workplace', authMiddleware, requireRoles(['SYSTEM_OWNER'
         totalUsers,
         activeUsers,
         disabledUsers,
-        recentUsers
+        suspendedUsers,
+        recentUsers,
+        inactiveUsers,
+        retentionByDay
       }
     });
   } catch (err) {
     console.error('Ops workplace error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// OPS_MODERATOR user login monitor (web-app users only, excludes all admin/staff roles)
+app.get('/api/admin/ops/active-users-logins', authMiddleware, requireRoles(['SYSTEM_OWNER', 'OPS_MODERATOR']), async (req, res) => {
+  try {
+    const q = String(req.query?.q || '').trim();
+    const status = String(req.query?.status || 'all').toLowerCase(); // all | suspended | unsuspended
+
+    const where = {
+      role: 'USER',
+      isActive: true
+    };
+
+    if (q) {
+      where.OR = [
+        { username: { contains: q } },
+        { email: { contains: q } }
+      ];
+    }
+
+    if (status === 'suspended') {
+      where.isSuspended = true;
+    } else if (status === 'unsuspended') {
+      where.isSuspended = false;
+    }
+
+    const users = await prisma.user.findMany({
+      where,
+      orderBy: [{ lastLoginAt: 'desc' }, { createdAt: 'desc' }],
+      take: 250,
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        isActive: true,
+        isSuspended: true,
+        lastLoginAt: true,
+        createdAt: true,
+      }
+    });
+
+    const [allActiveWebUsers, suspendedActiveWebUsers] = await Promise.all([
+      prisma.user.count({ where: { role: 'USER', isActive: true } }),
+      prisma.user.count({ where: { role: 'USER', isActive: true, isSuspended: true } })
+    ]);
+
+    return res.json({
+      success: true,
+      count: users.length,
+      users,
+      summary: {
+        allActiveWebUsers,
+        suspendedActiveWebUsers,
+        unsuspendedActiveWebUsers: Math.max(0, allActiveWebUsers - suspendedActiveWebUsers)
+      }
+    });
+  } catch (err) {
+    console.error('Ops active users login monitor error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.patch('/api/admin/ops/users/:userId/suspension', authMiddleware, requireRoles(['SYSTEM_OWNER', 'OPS_MODERATOR']), async (req, res) => {
+  try {
+    const targetUserId = Number(req.params.userId);
+    const shouldSuspend = Boolean(req.body?.suspended);
+
+    if (!Number.isFinite(targetUserId)) {
+      return res.status(400).json({ success: false, error: 'Invalid user id' });
+    }
+
+    if (targetUserId === req.user.userId) {
+      return res.status(400).json({ success: false, error: 'You cannot suspend your own account' });
+    }
+
+    const target = assertNotSovereignTarget(await getUserByIdForProtection(targetUserId));
+
+    // OPS_MODERATOR can only take suspension actions on regular web-app users.
+    if (String(req.user.role || '').toUpperCase() === 'OPS_MODERATOR' && String(target.role || '').toUpperCase() !== 'USER') {
+      return res.status(403).json({
+        success: false,
+        error: 'OPS_MODERATOR can only suspend regular web-app users.'
+      });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: targetUserId },
+      data: { isSuspended: shouldSuspend },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        isActive: true,
+        isSuspended: true,
+        lastLoginAt: true
+      }
+    });
+
+    await logStaffActivity({
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      action: shouldSuspend ? 'OPS_SUSPEND_USER' : 'OPS_UNSUSPEND_USER',
+      target: updated.email,
+      details: shouldSuspend
+        ? `Ops suspended ${updated.username}`
+        : `Ops unsuspended ${updated.username}`
+    });
+
+    return res.json({
+      success: true,
+      message: shouldSuspend
+        ? `${updated.username} has been suspended.`
+        : `${updated.username} has been unsuspended.`,
+      user: updated
+    });
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ success: false, error: err.message });
+    }
+    console.error('Ops suspension error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/admin/ops/home-media', authMiddleware, requireRoles(['SYSTEM_OWNER', 'OPS_MODERATOR']), async (req, res) => {
+  try {
+    const { fileName, mimeType, dataUrl, title } = req.body || {};
+
+    const mediaType = inferMediaTypeFromMime(mimeType);
+    if (mediaType === 'unknown') {
+      return res.status(400).json({ success: false, error: 'Unsupported media type. Use image/* or video/*.' });
+    }
+
+    const dataUrlMatch = String(dataUrl || '').match(/^data:([a-zA-Z0-9/+.-]+);base64,([\s\S]+)$/);
+    if (!dataUrlMatch) {
+      return res.status(400).json({ success: false, error: 'Invalid upload payload.' });
+    }
+
+    const base64Payload = dataUrlMatch[2] || '';
+    const buffer = Buffer.from(base64Payload, 'base64');
+
+    if (!buffer.length) {
+      return res.status(400).json({ success: false, error: 'Uploaded file is empty.' });
+    }
+
+    if (buffer.length > 8 * 1024 * 1024) {
+      return res.status(400).json({ success: false, error: 'File is too large. Max upload size is 8MB.' });
+    }
+
+    const timestampPrefix = Date.now();
+    const safeOriginalName = sanitizeUploadFileName(fileName || 'homepage-media');
+    const savedFileName = `${timestampPrefix}-${safeOriginalName}`;
+    const absolutePath = path.join(homeMediaPath, savedFileName);
+
+    fs.writeFileSync(absolutePath, buffer);
+
+    const existingItems = loadHomeMediaItems();
+    const nextItem = {
+      id: crypto.randomUUID(),
+      title: String(title || '').trim().slice(0, 120) || 'Homepage media',
+      type: mediaType,
+      mimeType: String(mimeType || '').toLowerCase(),
+      fileName: savedFileName,
+      url: `${PUBLIC_URL}/home-media/${savedFileName}`,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: req.user?.email || `user-${req.user?.userId || 'unknown'}`
+    };
+
+    const updatedItems = [nextItem, ...existingItems].slice(0, 30);
+    saveHomeMediaItems(updatedItems);
+
+    await logStaffActivity({
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      action: 'OPS_UPLOAD_HOMEPAGE_MEDIA',
+      target: savedFileName,
+      details: `${mediaType.toUpperCase()} uploaded for homepage display`
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Homepage media uploaded successfully.',
+      item: nextItem,
+      items: updatedItems
+    });
+  } catch (err) {
+    console.error('Ops homepage media upload error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/admin/socialmedia/high-score-kit', authMiddleware, requireRoles(['SYSTEM_OWNER', 'SOCIAL_MEDIA_CONTROLLER']), async (req, res) => {
+  try {
+    const weekStart = new Date();
+    weekStart.setDate(weekStart.getDate() - 7);
+
+    const weeklyBackups = await prisma.backup.findMany({
+      where: { timestamp: { gte: weekStart }, quizzes: { not: null } },
+      select: {
+        userId: true,
+        quizzes: true,
+        user: { select: { id: true, username: true, email: true } }
+      },
+      orderBy: { timestamp: 'desc' },
+      take: 400
+    });
+
+    const board = new Map();
+    weeklyBackups.forEach((backup) => {
+      const key = backup.userId || backup.user?.id;
+      if (!key) return;
+
+      const scoreBucket = summarizeQuestionsFromBackup(backup.quizzes);
+      const existing = board.get(key) || {
+        userId: key,
+        username: backup.user?.username || `user-${key}`,
+        email: backup.user?.email || 'unknown@learnlite.app',
+        scores: [],
+        attempts: 0
+      };
+
+      existing.scores.push(...scoreBucket.scores);
+      existing.attempts += 1;
+      board.set(key, existing);
+    });
+
+    const leaderboard = Array.from(board.values())
+      .map((item) => {
+        const average = item.scores.length
+          ? item.scores.reduce((sum, score) => sum + score, 0) / item.scores.length
+          : 0;
+        return {
+          userId: item.userId,
+          username: item.username,
+          email: item.email,
+          averageScore: Math.round(average),
+          attempts: item.attempts
+        };
+      })
+      .sort((a, b) => b.averageScore - a.averageScore || b.attempts - a.attempts)
+      .slice(0, 5)
+      .map((entry, index) => ({ ...entry, rank: index + 1 }));
+
+    const whatsappLines = [
+      '🔥 Learn Lite Weekly Top Performers 🔥',
+      ...leaderboard.map((entry) => `#${entry.rank} ${entry.username} - ${entry.averageScore}% (${entry.attempts} attempts)`),
+      '',
+      'Join the learning wave on Learn Lite. Keep pushing! 🚀 #LearnLite #TopScorers'
+    ];
+
+    return res.json({
+      success: true,
+      kit: {
+        generatedAt: new Date().toISOString(),
+        leaderboard,
+        whatsappTemplate: whatsappLines.join('\n')
+      }
+    });
+  } catch (err) {
+    console.error('High score kit error:', err);
     return res.status(500).json({ success: false, error: 'Server error' });
   }
 });
@@ -2757,6 +4679,8 @@ app.post('/api/admin/assign-role', authMiddleware, systemOwnerMiddleware, async 
       });
     }
 
+    const target = assertNotSovereignTarget(await getUserByEmailForProtection(normalizedEmail));
+
     const updated = await prisma.user.update({
       where: { email: normalizedEmail },
       data: { role },
@@ -2828,18 +4752,7 @@ app.post('/api/admin/overwrite-password', authMiddleware, systemOwnerMiddleware,
       return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
     }
 
-    const target = await prisma.user.findUnique({
-      where: { email: normalizedEmail },
-      select: { id: true, role: true, email: true }
-    });
-
-    if (!target) {
-      return res.status(404).json({ success: false, error: 'User not found' });
-    }
-
-    if (target.role === 'SYSTEM_OWNER') {
-      return res.status(403).json({ success: false, error: 'SYSTEM_OWNER password cannot be overwritten' });
-    }
+    const target = assertNotSovereignTarget(await getUserByEmailForProtection(normalizedEmail));
 
     const managedRoleByEmail = MANAGED_ACCOUNT_ROLE_MAP[normalizedEmail];
     if (managedRoleByEmail && req.user.role !== 'SYSTEM_OWNER') {
@@ -2880,18 +4793,7 @@ app.post('/api/admin/set-active', authMiddleware, systemOwnerMiddleware, async (
       return res.status(400).json({ success: false, error: 'email and boolean isActive are required' });
     }
 
-    const target = await prisma.user.findUnique({
-      where: { email: normalizedEmail },
-      select: { id: true, role: true, email: true }
-    });
-
-    if (!target) {
-      return res.status(404).json({ success: false, error: 'User not found' });
-    }
-
-    if (target.role === 'SYSTEM_OWNER') {
-      return res.status(403).json({ success: false, error: 'SYSTEM_OWNER account cannot be deactivated' });
-    }
+    const target = assertNotSovereignTarget(await getUserByEmailForProtection(normalizedEmail));
 
     if (target.id === req.user.userId && isActive === false) {
       return res.status(400).json({ success: false, error: 'You cannot deactivate your own account' });
@@ -2922,8 +4824,354 @@ app.post('/api/admin/set-active', authMiddleware, systemOwnerMiddleware, async (
       user: updated
     });
   } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ success: false, error: err.message });
+    }
     console.error('Set active error:', err);
     return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/root/mission-control', authMiddleware, isRootMiddleware, async (req, res) => {
+  try {
+    const [paymentAgg, activeUsers, systemErrors, events, pendingDisbursements] = await prisma.$transaction([
+      prisma.payment.aggregate({ _sum: { amount: true }, _count: { _all: true } }),
+      prisma.user.count({ where: { isActive: true } }),
+      prisma.staffActivity.count({ where: { action: { contains: 'ERROR' } } }),
+      prisma.staffActivity.findMany({
+        take: 10,
+        orderBy: { createdAt: 'desc' }
+      }),
+      prisma.proposedDisbursement.findMany({
+        where: { status: 'PENDING' },
+        orderBy: { createdAt: 'desc' },
+        take: 20
+      })
+    ]);
+
+    return res.json({
+      success: true,
+      kpis: {
+        totalRevenue: Number(paymentAgg._sum.amount || 0),
+        activeUsers,
+        systemErrors,
+        successfulPayments: Number(paymentAgg._count._all || 0)
+      },
+      recommendedActions: pendingDisbursements,
+      events: events.map((item) => ({
+        id: item.id,
+        action: item.action,
+        actorEmail: item.actorEmail,
+        target: item.target,
+        details: item.details,
+        createdAt: item.createdAt,
+        affectedRoute: mapActivityRoute(item)
+      }))
+    });
+  } catch (err) {
+    console.error('Mission Control fetch error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/root/proposed-disbursements/:proposalId/approve', authMiddleware, isRootMiddleware, async (req, res) => {
+  try {
+    const proposalId = Number(req.params.proposalId);
+    if (!Number.isFinite(proposalId)) {
+      return res.status(400).json({ success: false, error: 'Invalid proposalId' });
+    }
+
+    const proposal = await prisma.proposedDisbursement.findUnique({ where: { id: proposalId } });
+    if (!proposal) {
+      return res.status(404).json({ success: false, error: 'Proposal not found' });
+    }
+
+    if (proposal.status !== 'PENDING') {
+      return res.status(400).json({ success: false, error: 'Only pending proposals can be approved' });
+    }
+
+    const executionReference = `EXEC-${Date.now()}-${proposal.id}`;
+    const approved = await prisma.proposedDisbursement.update({
+      where: { id: proposal.id },
+      data: {
+        status: 'APPROVED',
+        approvedById: req.user.userId,
+        approvedByEmail: req.user.email,
+        approvedAt: new Date(),
+        executionReference
+      }
+    });
+
+    await logStaffActivity({
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      action: 'ROOT_APPROVED_DISBURSEMENT',
+      target: `proposal#${proposal.id}`,
+      details: `Approved ${proposal.requestedAmount} for ${proposal.destinationDepartment}`
+    });
+
+    return res.json({ success: true, proposal: approved, executed: true });
+  } catch (err) {
+    console.error('Approve disbursement proposal error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// ========================================
+// ROOT SOVEREIGNTY ENDPOINTS
+// ========================================
+
+app.get('/api/root/god-view', authMiddleware, isRootMiddleware, async (req, res) => {
+  try {
+    const [financial, attendance, academic] = await prisma.$transaction([
+      prisma.payment.aggregate({ _count: { _all: true }, _sum: { amount: true, fuelAdded: true } }),
+      prisma.user.groupBy({ by: ['isActive', 'isSuspended'], _count: { _all: true } }),
+      prisma.questionBank.aggregate({ _count: { _all: true }, _avg: { failRate: true } })
+    ]);
+
+    const [groupCount, classSectionCount, activeLast24h] = await prisma.$transaction([
+      prisma.group.count(),
+      prisma.classSection.count(),
+      prisma.user.count({ where: { lastLoginAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } } })
+    ]);
+
+    return res.json({
+      success: true,
+      report: {
+        generatedAt: new Date().toISOString(),
+        financial: {
+          transactionCount: financial._count._all,
+          grossAmountKobo: financial._sum.amount || 0,
+          fuelDistributed: financial._sum.fuelAdded || 0
+        },
+        attendance: { activeLast24h, byStatus: attendance },
+        academic: {
+          questionBankCount: academic._count._all,
+          avgFailRate: academic._avg.failRate || 0,
+          groups: groupCount,
+          classSections: classSectionCount
+        }
+      }
+    });
+  } catch (err) {
+    console.error('Root god-view error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/root/audit/sensitive', authMiddleware, isRootMiddleware, async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit || 100)));
+    const skip = (page - 1) * limit;
+    const sensitiveActions = ['ASSIGN_ROLE', 'ROOT_ROLE_CHANGE', 'GRADE_OVERRIDE', 'ROOT_KILL_SWITCH', 'ROOT_GLOBAL_SETTINGS'];
+
+    const [total, logs] = await prisma.$transaction([
+      prisma.staffActivity.count({ where: { action: { in: sensitiveActions } } }),
+      prisma.staffActivity.findMany({
+        where: { action: { in: sensitiveActions } },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit
+      })
+    ]);
+
+    return res.json({
+      success: true,
+      logs,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit))
+      }
+    });
+  } catch (err) {
+    console.error('Root sensitive audit error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.put('/api/root/settings/overrides', authMiddleware, isRootMiddleware, async (req, res) => {
+  try {
+    const maintenanceMode = req.body?.maintenanceMode;
+    const registrationOpen = req.body?.registrationOpen;
+
+    const state = await prisma.$transaction(async (tx) => {
+      const actor = await tx.user.findUnique({
+        where: { id: req.user.userId },
+        select: { id: true, role: true, email: true }
+      });
+
+      if (!actor) throw new Error('Actor not found');
+
+      const current = await getRootGlobalSettings();
+      const nextState = {
+        maintenanceMode: typeof maintenanceMode === 'boolean' ? maintenanceMode : current.maintenanceMode,
+        registrationOpen: typeof registrationOpen === 'boolean' ? registrationOpen : current.registrationOpen,
+        updatedAt: new Date().toISOString(),
+        updatedBy: actor.id
+      };
+
+      await tx.staffActivity.create({
+        data: {
+          actorId: actor.id,
+          actorRole: actor.role,
+          actorEmail: actor.email,
+          action: 'ROOT_GLOBAL_SETTINGS',
+          target: 'SYSTEM',
+          details: JSON.stringify(nextState)
+        }
+      });
+
+      return nextState;
+    });
+
+    return res.json({ success: true, state });
+  } catch (err) {
+    console.error('Root global override error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/root/kill-switch', authMiddleware, isRootMiddleware, async (req, res) => {
+  try {
+    const targetUserId = Number(req.body?.targetUserId);
+    const reason = String(req.body?.reason || 'Security action');
+    if (!Number.isFinite(targetUserId)) {
+      return res.status(400).json({ success: false, error: 'targetUserId is required' });
+    }
+
+    if (targetUserId === req.user.userId) {
+      return res.status(400).json({ success: false, error: 'Root cannot deactivate themselves' });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const actor = await tx.user.findUnique({
+        where: { id: req.user.userId },
+        select: { id: true, role: true, email: true }
+      });
+      if (!actor) throw new Error('Actor not found');
+
+      const updateResult = await tx.user.updateMany({
+        where: {
+          id: targetUserId,
+          role: { notIn: ROOT_EQUIVALENT_ROLES }
+        },
+        data: {
+          isActive: false,
+          isSuspended: true
+        }
+      });
+
+      if (updateResult.count === 0) {
+        throw new Error('Target not found or target is protected root account');
+      }
+
+      const target = await tx.user.findUnique({
+        where: { id: targetUserId },
+        select: { id: true, username: true, email: true, role: true }
+      });
+
+      await tx.staffActivity.create({
+        data: {
+          actorId: actor.id,
+          actorRole: actor.role,
+          actorEmail: actor.email,
+          action: 'ROOT_KILL_SWITCH',
+          target: target?.email || `USER:${targetUserId}`,
+          details: JSON.stringify({ reason, revokedAt: new Date().toISOString() })
+        }
+      });
+
+      return { target };
+    });
+
+    return res.json({ success: true, tokenRevoked: true, ...result });
+  } catch (err) {
+    console.error('Root kill-switch error:', err);
+    return res.status(400).json({ success: false, error: err.message || 'Kill switch failed' });
+  }
+});
+
+app.post('/api/root/role-escalator', authMiddleware, isRootMiddleware, async (req, res) => {
+  try {
+    const targetUserId = Number(req.body?.targetUserId);
+    const newRole = String(req.body?.newRole || '').toUpperCase();
+    const reason = String(req.body?.reason || 'Hierarchy update');
+
+    if (!Number.isFinite(targetUserId) || !newRole) {
+      return res.status(400).json({ success: false, error: 'targetUserId and newRole are required' });
+    }
+
+    if (targetUserId === req.user.userId) {
+      return res.status(400).json({ success: false, error: 'Root cannot edit their own role' });
+    }
+
+    const user = await prisma.$transaction(async (tx) => {
+      const actor = await tx.user.findUnique({
+        where: { id: req.user.userId },
+        select: { id: true, role: true, email: true }
+      });
+      if (!actor) throw new Error('Actor not found');
+
+      const target = await tx.user.findUnique({
+        where: { id: targetUserId },
+        select: { id: true, role: true }
+      });
+      assertNotSovereignTarget(target);
+
+      const updated = await tx.user.update({
+        where: { id: targetUserId },
+        data: { role: newRole },
+        select: { id: true, username: true, email: true, role: true }
+      });
+
+      await tx.staffActivity.create({
+        data: {
+          actorId: actor.id,
+          actorRole: actor.role,
+          actorEmail: actor.email,
+          action: 'ROOT_ROLE_CHANGE',
+          target: updated.email,
+          details: JSON.stringify({ newRole, reason })
+        }
+      });
+
+      return updated;
+    });
+
+    return res.json({ success: true, user });
+  } catch (err) {
+    console.error('Root role escalator error:', err);
+    return res.status(400).json({ success: false, error: err.message || 'Role escalator failed' });
+  }
+});
+
+app.post('/api/root/database-snapshot', authMiddleware, isRootMiddleware, async (req, res) => {
+  try {
+    const dbPath = path.resolve(__dirname, process.env.DATABASE_URL?.replace('file:', '') || './dev.db');
+    const snapshotsDir = path.resolve(path.dirname(dbPath), 'snapshots');
+    if (!fs.existsSync(snapshotsDir)) {
+      fs.mkdirSync(snapshotsDir, { recursive: true });
+    }
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const snapshotPath = path.join(snapshotsDir, `dev-snapshot-${stamp}.db`);
+    fs.copyFileSync(dbPath, snapshotPath);
+
+    await logStaffActivity({
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      action: 'ROOT_DATABASE_SNAPSHOT',
+      target: snapshotPath,
+      details: 'Manual Prisma DB snapshot completed'
+    });
+
+    return res.json({ success: true, snapshotPath });
+  } catch (err) {
+    console.error('Root database snapshot error:', err);
+    return res.status(500).json({ success: false, error: 'Snapshot failed' });
   }
 });
 
@@ -2969,6 +5217,9 @@ app.post('/api/admin/users/:userId/add-fuel', authMiddleware, adminMiddleware, a
     });
   } catch (err) {
     console.error('Add fuel error:', err);
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ success: false, error: err.message });
+    }
     if (err.code === 'P2025') {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
@@ -3196,6 +5447,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🔐 CORS Origin: ${FRONTEND_ORIGIN}`);
   console.log(`🗄️  Database: ${process.env.DATABASE_URL || 'file:./dev.db'}`);
   console.log(`🌐 API: http://localhost:${PORT} | http://127.0.0.1:${PORT}\n`);
+
+  startWeeklyFinancialReportCron(prisma);
 });
 
 module.exports = app;
