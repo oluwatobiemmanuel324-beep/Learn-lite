@@ -10,7 +10,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        value: file:/data/dev.db
+        value: postgresql://username:password@host:5432/learn_lite?schema=public
       - key: JWT_SECRET
         generateValue: true
       - key: FRONTEND_ORIGIN
@@ -22,7 +22,3 @@ services:
       - key: PAYSTACK_CALLBACK_URL
         value: https://learn-lite.onrender.com/generate-video
     autoDeploy: true
-    disk:
-      name: learn-lite-data
-      mountPath: /data
-      sizeGB: 1
