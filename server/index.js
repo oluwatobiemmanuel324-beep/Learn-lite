@@ -5446,6 +5446,10 @@ app.use((err, req, res, next) => {
   });
 });
 
+app.get('/', (req, res) => {
+  res.json({ message: 'Learn Lite API is running' });
+});
+
 // ========================================
 // 404 HANDLER
 // ========================================
