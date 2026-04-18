@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
-    "migrate": "npx prisma migrate dev",
+    "prisma:migrate:dev": "npx prisma migrate dev --schema prisma/schema.prisma",
+    "prisma:migrate:deploy": "npx prisma migrate deploy --schema prisma/schema.prisma",
+    "migrate": "npm run prisma:migrate:dev",
     "seed": "node prisma/seed.js",
     "seed:test": "node prisma/seed-test.js"
   },

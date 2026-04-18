@@ -16,7 +16,6 @@ yarn.lock
 
 # Prisma
 .prisma/
-prisma/migrations/
 
 # Logs
 logs/

@@ -10,6 +10,7 @@
     "dev": "vite --port 5173",
     "build": "vite build",
     "prisma:generate": "npx prisma generate --schema server/prisma/schema.prisma",
+    "prisma:migrate:dev": "npx prisma migrate dev --schema server/prisma/schema.prisma",
     "prisma:migrate:deploy": "npx prisma migrate deploy --schema server/prisma/schema.prisma",
     "lint": "eslint .",
     "preview": "vite preview"
