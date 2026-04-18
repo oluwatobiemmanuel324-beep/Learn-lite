@@ -35,6 +35,7 @@ const { startWeeklyFinancialReportCron } = require('./cron/reports');
 
 const PORT = process.env.PORT || 4000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+const DATABASE_URL = process.env.DATABASE_URL;
 const FRONTEND_URL = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 const PUBLIC_URL = process.env.PUBLIC_URL || process.env.BACKEND_PUBLIC_URL || 'http://localhost:4000';
 const PAYSTACK_CALLBACK_URL = process.env.PAYSTACK_CALLBACK_URL || `${FRONTEND_URL}/generate-video`;
@@ -43,6 +44,11 @@ const HEYGEN_BASE_URL = `https://api.heygen.com/${HEYGEN_API_VERSION}`;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
+
+if (NODE_ENV === 'production' && !DATABASE_URL) {
+  console.error('❌ FATAL: DATABASE_URL must be provided in production.');
+  process.exit(1);
+}
 
 let JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -5173,7 +5179,18 @@ app.post('/api/root/role-escalator', authMiddleware, isRootMiddleware, async (re
 
 app.post('/api/root/database-snapshot', authMiddleware, isRootMiddleware, async (req, res) => {
   try {
-    const dbPath = path.resolve(__dirname, process.env.DATABASE_URL?.replace('file:', '') || './dev.db');
+    if (!DATABASE_URL) {
+      return res.status(400).json({ success: false, error: 'DATABASE_URL is not configured' });
+    }
+
+    if (!DATABASE_URL.startsWith('file:')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Database snapshot endpoint only supports SQLite file databases'
+      });
+    }
+
+    const dbPath = path.resolve(__dirname, DATABASE_URL.replace('file:', ''));
     const snapshotsDir = path.resolve(path.dirname(dbPath), 'snapshots');
     if (!fs.existsSync(snapshotsDir)) {
       fs.mkdirSync(snapshotsDir, { recursive: true });
@@ -5472,7 +5489,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`📍 Port: ${PORT}`);
   console.log(`🌍 Environment: ${NODE_ENV}`);
   console.log(`🔐 CORS Origin: ${FRONTEND_ORIGIN}`);
-  console.log(`🗄️  Database: ${process.env.DATABASE_URL || 'file:./dev.db'}`);
+  console.log(`🗄️  Database: ${DATABASE_URL || 'not configured'}`);
   console.log(`🌐 API: http://localhost:${PORT} | http://127.0.0.1:${PORT}\n`);
 
   startWeeklyFinancialReportCron(prisma);

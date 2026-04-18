@@ -1,13 +1,13 @@
 // Learn Lite Database Schema
 // Prisma ORM Configuration
-// Database: SQLite (dev.db) or PostgreSQL (production)
+// Database: PostgreSQL via DATABASE_URL
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -31,12 +31,24 @@ enum GroupMemberRole {
   MEMBER
 }
 
+enum DisbursementStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 // User model - authentication and profile
 model User {
   id              Int      @id @default(autoincrement())
   idNumber        Int?     @unique
   role            Role     @default(USER)
   isActive        Boolean  @default(true)
+  isSuspended     Boolean  @default(false)
+  lastLoginAt     DateTime @default(now())
+  health          Int      @default(100)
+  lastHealthUpdate DateTime @default(now())
+  totalQuestionsAttempted Int @default(0)
+  totalQuestionsCorrect Int @default(0)
   username        String   @unique
   email           String   @unique
   password        String
@@ -55,6 +67,7 @@ model User {
   receivedStaffMessages StaffMessage[] @relation("StaffMessageRecipient")
   staffActivities StaffActivity[]
   contactReplies  ContactReply[]
+  createdQuestions QuestionBank[] @relation("QuestionBankCreator")
 }
 
 model Group {
@@ -191,6 +204,27 @@ model Payment {
   processedAt     DateTime @default(now())
 }
 
+model ProposedDisbursement {
+  id                    Int                @id @default(autoincrement())
+  sourcePool            String
+  destinationDepartment String
+  justification         String
+  requestedAmount       Int                @default(0)
+  status                DisbursementStatus @default(PENDING)
+  createdById           Int
+  createdByRole         Role
+  createdByEmail        String
+  approvedById          Int?
+  approvedByEmail       String?
+  executionReference    String?
+  approvedAt            DateTime?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  @@index([status, createdAt])
+  @@index([createdById, createdAt])
+}
+
 model StaffMessage {
   id              Int      @id @default(autoincrement())
   senderId        Int
@@ -222,4 +256,24 @@ model StaffActivity {
 
   @@index([createdAt])
   @@index([actorRole, createdAt])
+}
+
+model QuestionBank {
+  id              Int      @id @default(autoincrement())
+  question        String
+  optionA         String
+  optionB         String
+  optionC         String
+  optionD         String
+  correctAnswer   String
+  difficulty      String   @default("medium")
+  failRate        Float    @default(0)
+  topic           String?
+  createdAt       DateTime @default(now())
+  createdById     Int
+
+  creator         User     @relation("QuestionBankCreator", fields: [createdById], references: [id])
+
+  @@index([difficulty, failRate])
+  @@index([createdAt])
 }
