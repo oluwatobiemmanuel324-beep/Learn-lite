@@ -7,18 +7,36 @@
 
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const RAW_API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').trim();
+const API_BASE_URL = RAW_API_BASE_URL.replace(/\/+$/, '');
+
+function normalizePath(pathname) {
+  const value = String(pathname || '');
+  const withSlash = value.startsWith('/') ? value : `/${value}`;
+  return withSlash.replace(/\/+$/, '');
+}
+
+function normalizeEndpoint(endpoint) {
+  const normalizedEndpoint = normalizePath(endpoint);
+  const baseHasApiSuffix = /\/api$/i.test(API_BASE_URL);
+
+  if (baseHasApiSuffix && normalizedEndpoint.startsWith('/api/')) {
+    return normalizedEndpoint.replace(/^\/api/i, '');
+  }
+
+  return normalizedEndpoint;
+}
 
 const ENDPOINT_ROLE_POLICIES = [
-  { prefix: '/api/admin/owner/', roles: ['SYSTEM_OWNER', 'ROOT_ADMIN'] },
-  { prefix: '/api/admin/finance/', roles: ['FINANCE_CONTROLLER', 'SYSTEM_OWNER', 'ROOT_ADMIN'] },
-  { prefix: '/api/admin/academic/', roles: ['ACADEMIC_REGISTRAR', 'SYSTEM_OWNER', 'ROOT_ADMIN'] },
-  { prefix: '/api/admin/ops/', roles: ['OPS_MODERATOR', 'SYSTEM_OWNER', 'ROOT_ADMIN'] },
-  { prefix: '/api/admin/socialmedia/', roles: ['SOCIAL_MEDIA_CONTROLLER', 'SYSTEM_OWNER', 'ROOT_ADMIN'] }
+  { prefix: '/admin/owner/', roles: ['SYSTEM_OWNER', 'ROOT_ADMIN'] },
+  { prefix: '/admin/finance/', roles: ['FINANCE_CONTROLLER', 'SYSTEM_OWNER', 'ROOT_ADMIN'] },
+  { prefix: '/admin/academic/', roles: ['ACADEMIC_REGISTRAR', 'SYSTEM_OWNER', 'ROOT_ADMIN'] },
+  { prefix: '/admin/ops/', roles: ['OPS_MODERATOR', 'SYSTEM_OWNER', 'ROOT_ADMIN'] },
+  { prefix: '/admin/socialmedia/', roles: ['SOCIAL_MEDIA_CONTROLLER', 'SYSTEM_OWNER', 'ROOT_ADMIN'] }
 ];
 
 function getDepartmentPolicy(url) {
-  const normalized = String(url || '');
+  const normalized = normalizeEndpoint(url).replace(/^\/api(?=\/|$)/i, '');
   return ENDPOINT_ROLE_POLICIES.find((policy) => normalized.startsWith(policy.prefix)) || null;
 }
 
@@ -81,7 +99,7 @@ api.interceptors.response.use(
       localStorage.removeItem('user_role');
 
       // Don't redirect for auth endpoints (login/signup/verify) — let the component handle it
-      const isAuthUrl = error.config?.url?.includes('/api/auth/');
+      const isAuthUrl = normalizeEndpoint(error.config?.url || '').includes('/auth/');
       const onAuthPage = window.location.pathname.includes('/login') || window.location.pathname.includes('/signup');
 
       if (!isAuthUrl && !onAuthPage) {
@@ -151,32 +169,32 @@ const client = {
   },
 
   get: async (endpoint, config = {}) => {
-    const response = await api.get(endpoint, config);
+    const response = await api.get(normalizeEndpoint(endpoint), config);
     return response.data;
   },
 
   post: async (endpoint, data = null) => {
-    const response = await api.post(endpoint, data);
+    const response = await api.post(normalizeEndpoint(endpoint), data);
     return response.data;
   },
 
   put: async (endpoint, data = null) => {
-    const response = await api.put(endpoint, data);
+    const response = await api.put(normalizeEndpoint(endpoint), data);
     return response.data;
   },
 
   patch: async (endpoint, data = null) => {
-    const response = await api.patch(endpoint, data);
+    const response = await api.patch(normalizeEndpoint(endpoint), data);
     return response.data;
   },
 
   delete: async (endpoint) => {
-    const response = await api.delete(endpoint);
+    const response = await api.delete(normalizeEndpoint(endpoint));
     return response.data;
   },
 
   postForm: async (endpoint, formData) => {
-    const response = await api.post(endpoint, formData, {
+    const response = await api.post(normalizeEndpoint(endpoint), formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }

@@ -268,6 +268,11 @@ app.use('/api/', (req, res, next) => {
   return next();
 });
 
+// Compatibility shim: normalize accidental double-prefixed API calls.
+app.use('/api/api', (req, res) => {
+  return res.redirect(307, `/api${req.url}`);
+});
+
 const forgotRequestLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
