@@ -276,7 +276,10 @@ export const publicAPI = {
 
 export const chatAPI = {
   getMessages: (groupId) => client.get(`/api/chat/${groupId}`),
-  sendMessage: (groupId, message) => client.post(`/api/chat/${groupId}`, { message })
+  sendMessage: (groupId, payload) => {
+    const normalized = typeof payload === 'string' ? { message: payload } : payload;
+    return client.post(`/api/chat/${groupId}`, normalized);
+  }
 };
 
 export const adminAPI = {

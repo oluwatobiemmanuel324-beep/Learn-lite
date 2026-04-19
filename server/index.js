@@ -2704,6 +2704,67 @@ function getRequesterUserId(req) {
   return Number(req.user?.id ?? req.user?.userId);
 }
 
+function sanitizeReplyPayload(replyTo) {
+  if (!replyTo || typeof replyTo !== 'object') return null;
+
+  const title = String(replyTo.title || '').trim().slice(0, 120);
+  const text = String(replyTo.text || '').trim().slice(0, 600);
+  if (!title && !text) return null;
+
+  return {
+    id: String(replyTo.id || '').trim().slice(0, 80) || null,
+    title: title || 'Message',
+    text
+  };
+}
+
+function mapGroupMessageRecordToWorkspaceMessage(record) {
+  return {
+    id: String(record.id || `msg-${Date.now()}`),
+    tone: String(record.tone || 'incoming'),
+    title: String(record.title || 'Classmate'),
+    text: String(record.text || '').trim(),
+    replyTo: sanitizeReplyPayload(record.replyTo),
+    reactions: record.reactions && typeof record.reactions === 'object' ? record.reactions : {},
+    createdAt: record.createdAt || new Date().toISOString(),
+    senderId: Number(record.senderId) || null
+  };
+}
+
+async function fetchGroupMessages(groupId, take = 400) {
+  const rows = await prisma.backup.findMany({
+    where: { messages: { not: null } },
+    orderBy: { timestamp: 'desc' },
+    take,
+    select: { id: true, timestamp: true, messages: true }
+  });
+
+  const output = [];
+
+  for (const row of rows.reverse()) {
+    const parsed = parseJsonSafely(row.messages, null);
+    if (!parsed || parsed.type !== 'GROUP_CHAT_MESSAGE') continue;
+    if (Number(parsed.groupId) !== Number(groupId)) continue;
+
+    const normalized = mapGroupMessageRecordToWorkspaceMessage({
+      id: parsed.messageId || row.id,
+      tone: parsed.tone || 'incoming',
+      title: parsed.title,
+      text: parsed.text,
+      replyTo: parsed.replyTo,
+      reactions: parsed.reactions,
+      createdAt: parsed.createdAt || row.timestamp,
+      senderId: parsed.senderId
+    });
+
+    if (normalized.text) {
+      output.push(normalized);
+    }
+  }
+
+  return output;
+}
+
 /**
  * Generates a random 6-character alphanumeric code (A-Z, 0-9)
  * Example: AB12CD, MATH24, XYZ789
@@ -3191,6 +3252,156 @@ app.patch('/api/groups/:id/role', authMiddleware, async (req, res) => {
   }
 });
 
+// List groups for the authenticated member
+app.get('/api/groups/mine', authMiddleware, async (req, res) => {
+  try {
+    const requesterId = getRequesterUserId(req);
+
+    if (!Number.isFinite(requesterId)) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const memberships = await prisma.groupMember.findMany({
+      where: { userId: requesterId },
+      orderBy: { joinedAt: 'desc' },
+      select: {
+        role: true,
+        joinedAt: true,
+        group: {
+          select: {
+            id: true,
+            name: true,
+            joinCode: true,
+            createdById: true,
+            createdAt: true,
+            _count: { select: { members: true } }
+          }
+        }
+      }
+    });
+
+    const groups = memberships.map((entry) => ({
+      id: entry.group.id,
+      name: entry.group.name,
+      joinCode: entry.group.joinCode,
+      createdById: entry.group.createdById,
+      createdAt: entry.group.createdAt,
+      memberCount: Number(entry.group._count?.members || 0),
+      role: entry.role,
+      isOwner: entry.group.createdById === requesterId
+    }));
+
+    return res.json({ success: true, groups });
+  } catch (err) {
+    console.error('Get my groups error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// Group chat messages: GET /api/chat/:groupId
+app.get('/api/chat/:groupId', authMiddleware, async (req, res) => {
+  try {
+    const groupId = Number(req.params.groupId);
+    const requesterId = getRequesterUserId(req);
+
+    if (!Number.isFinite(groupId)) {
+      return res.status(400).json({ success: false, error: 'Invalid group id' });
+    }
+
+    if (!Number.isFinite(requesterId)) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const membership = await prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId: requesterId } },
+      select: { groupId: true }
+    });
+
+    if (!membership) {
+      return res.status(403).json({ success: false, error: 'You are not a member of this group' });
+    }
+
+    const messages = await fetchGroupMessages(groupId, 500);
+    return res.json({ success: true, messages });
+  } catch (err) {
+    console.error('Get group chat messages error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// Group chat messages: POST /api/chat/:groupId
+app.post('/api/chat/:groupId', authMiddleware, async (req, res) => {
+  try {
+    const groupId = Number(req.params.groupId);
+    const requesterId = getRequesterUserId(req);
+    const messageInput = typeof req.body?.message === 'string'
+      ? req.body.message
+      : (typeof req.body?.text === 'string' ? req.body.text : '');
+    const rawMessage = String(messageInput || '').trim();
+
+    if (!Number.isFinite(groupId)) {
+      return res.status(400).json({ success: false, error: 'Invalid group id' });
+    }
+
+    if (!Number.isFinite(requesterId)) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    if (!rawMessage) {
+      return res.status(400).json({ success: false, error: 'message is required' });
+    }
+
+    const [membership, user] = await Promise.all([
+      prisma.groupMember.findUnique({
+        where: { groupId_userId: { groupId, userId: requesterId } },
+        select: { role: true }
+      }),
+      prisma.user.findUnique({
+        where: { id: requesterId },
+        select: { username: true }
+      })
+    ]);
+
+    if (!membership) {
+      return res.status(403).json({ success: false, error: 'You are not a member of this group' });
+    }
+
+    const message = mapGroupMessageRecordToWorkspaceMessage({
+      id: `msg-${groupId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      tone: 'outgoing',
+      title: user?.username || 'Classmate',
+      text: rawMessage.slice(0, 2000),
+      replyTo: sanitizeReplyPayload(req.body?.replyTo),
+      reactions: {},
+      createdAt: new Date().toISOString(),
+      senderId: requesterId
+    });
+
+    await prisma.backup.create({
+      data: {
+        userId: requesterId,
+        messages: JSON.stringify({
+          type: 'GROUP_CHAT_MESSAGE',
+          groupId,
+          senderId: requesterId,
+          messageId: message.id,
+          tone: message.tone,
+          title: message.title,
+          text: message.text,
+          replyTo: message.replyTo,
+          reactions: message.reactions,
+          createdAt: message.createdAt
+        })
+      }
+    });
+
+    return res.status(201).json({ success: true, message });
+  } catch (err) {
+    console.error('Send group chat message error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
 // Premium publish: save quiz payload for a class group and deduct 1 fuel
 app.post('/api/groups/:id/publish-quiz', authMiddleware, fuelMiddleware, async (req, res) => {
   try {
@@ -3395,6 +3606,7 @@ app.post('/api/groups/:id/publish-quiz', authMiddleware, async (req, res) => {
 app.post('/api/ai/chat', authMiddleware, async (req, res) => {
   try {
     const { groupId, message } = req.body;
+    const requesterId = getRequesterUserId(req);
 
     if (!message || !groupId) {
       return res.status(400).json({ 
@@ -3403,12 +3615,16 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
       });
     }
 
+    if (!Number.isFinite(requesterId)) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
     // Check if user is part of the group
     const membership = await prisma.groupMember.findUnique({
       where: {
         groupId_userId: {
           groupId: Number(groupId),
-          userId: req.user.userId
+          userId: requesterId
         }
       }
     });
@@ -3449,14 +3665,18 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
 
     res.json({
       success: true,
-      message: aiResponse,
+      message: String(aiResponse || '').trim(),
       provider: 'gemini',
       isAIMock: false
     });
 
   } catch (err) {
     console.error('AI chat error:', err.response?.data || err.message || err);
-    res.status(500).json({ success: false, error: 'Server error' });
+    const rootMessage = err?.response?.data?.error?.message || err?.message || 'Server error';
+    if (/not configured/i.test(rootMessage)) {
+      return res.status(503).json({ success: false, error: 'AI service is not configured' });
+    }
+    res.status(500).json({ success: false, error: rootMessage });
   }
 });
 

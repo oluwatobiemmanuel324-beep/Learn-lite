@@ -270,7 +270,7 @@ export default function App() {
       <Router>
         <AppErrorBoundary>
           <AppRoutes />
-          <AuthDebug />
+          {import.meta.env.DEV ? <AuthDebug /> : null}
         </AppErrorBoundary>
       </Router>
     </AppProvider>

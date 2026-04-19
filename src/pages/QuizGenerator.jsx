@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { getApiErrorMessage, groupAPI, quizAPI, userAPI } from '../services/api';
+import { aiAPI, chatAPI, getApiErrorMessage, groupAPI, quizAPI, userAPI } from '../services/api';
 import { useApp } from '../context/AppContext';
 
 const backgroundPresets = [
@@ -245,6 +245,43 @@ export default function QuizGenerator() {
     fetchFuelBalance();
   }, []);
 
+  const loadGroupMessages = async () => {
+    if (!groupId) return;
+
+    try {
+      const result = await chatAPI.getMessages(groupId);
+      if (!result?.success || !Array.isArray(result?.messages)) {
+        return;
+      }
+
+      const normalizedMessages = result.messages.map((message) => {
+        const senderId = Number(message?.senderId || 0);
+        const tone = senderId && senderId === currentUserId ? 'outgoing' : 'incoming';
+
+        return {
+          id: String(message.id || `${Date.now()}-${Math.random()}`),
+          tone,
+          title: String(message.title || 'Classmate'),
+          text: String(message.text || '').trim(),
+          replyTo: message.replyTo || null,
+          reactions: message.reactions && typeof message.reactions === 'object' ? message.reactions : {}
+        };
+      }).filter((message) => message.text);
+
+      setWorkspaceMessages(normalizedMessages);
+    } catch (err) {
+      console.warn('Unable to load class messages:', getApiErrorMessage(err, 'Unable to load class messages right now.'));
+    }
+  };
+
+  useEffect(() => {
+    if (!groupId) return;
+
+    loadGroupMessages();
+    const intervalId = window.setInterval(loadGroupMessages, 8000);
+    return () => window.clearInterval(intervalId);
+  }, [groupId]);
+
   useEffect(() => {
     try {
       const parsed = JSON.parse(localStorage.getItem(examHistoryKey) || '[]');
@@ -440,18 +477,15 @@ export default function QuizGenerator() {
         }
       : null;
 
-    // Add user message to chat
-    appendWorkspaceMessage({
-      tone: 'outgoing',
-      title: currentUsername,
-      text: messageText,
-      replyTo: outgoingReply
-    });
+    if (isStandaloneMode) {
+      appendWorkspaceMessage({
+        tone: 'outgoing',
+        title: currentUsername,
+        text: messageText,
+        replyTo: outgoingReply
+      });
 
-    // If message mentions @learnlite, trigger AI response
-    if (mentionsAI) {
-      // Simulate AI thinking delay
-      setTimeout(() => {
+      if (mentionsAI) {
         appendWorkspaceMessage({
           tone: 'incoming',
           title: '@learnlite',
@@ -462,11 +496,73 @@ export default function QuizGenerator() {
             text: messageText
           }
         });
-      }, 800);
+      }
+
+      setDraftMessage('');
+      setReplyTarget(null);
+      return;
     }
 
-    setDraftMessage('');
-    setReplyTarget(null);
+    try {
+      const sendResult = await chatAPI.sendMessage(groupId, {
+        text: messageText,
+        replyTo: outgoingReply
+      });
+
+      if (sendResult?.success && sendResult?.message) {
+        const sentMessage = sendResult.message;
+        appendWorkspaceMessage({
+          id: sentMessage.id,
+          tone: 'outgoing',
+          title: sentMessage.title || currentUsername,
+          text: sentMessage.text || messageText,
+          replyTo: sentMessage.replyTo || outgoingReply,
+          reactions: sentMessage.reactions || {}
+        });
+      } else {
+        appendWorkspaceMessage({
+          tone: 'outgoing',
+          title: currentUsername,
+          text: messageText,
+          replyTo: outgoingReply
+        });
+      }
+
+      if (mentionsAI) {
+        try {
+          const aiResult = await aiAPI.chat(groupId, messageText);
+          if (aiResult?.success && aiResult?.message) {
+            appendWorkspaceMessage({
+              tone: 'incoming',
+              title: '@learnlite',
+              text: String(aiResult.message).trim(),
+              replyTo: {
+                id: `${Date.now()}-prompt`,
+                title: currentUsername,
+                text: messageText
+              }
+            });
+          }
+        } catch (aiErr) {
+          const aiMessage = getApiErrorMessage(aiErr, 'AI assistant is currently unavailable.');
+          appendWorkspaceMessage({
+            tone: 'system',
+            title: '@learnlite',
+            text: aiMessage
+          });
+        }
+      }
+    } catch (err) {
+      const message = getApiErrorMessage(err, 'Unable to send message to your class group.');
+      appendWorkspaceMessage({
+        tone: 'system',
+        title: 'Message failed',
+        text: message
+      });
+    } finally {
+      setDraftMessage('');
+      setReplyTarget(null);
+    }
   };
 
   const handleGenerateQuizShortcut = () => {

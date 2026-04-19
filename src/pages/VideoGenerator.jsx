@@ -3,6 +3,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import axios from 'axios';
 
+const API_ROOT = String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+const buildApiUrl = (path) => (API_ROOT ? `${API_ROOT}${path}` : path);
+
 export default function VideoGenerator() {
   const { theme } = useApp();
   const location = useLocation();
@@ -91,7 +94,7 @@ export default function VideoGenerator() {
       }
 
       const response = await axios.get(
-        'http://localhost:4000/api/user/fuel?t=' + Date.now(),
+        buildApiUrl('/api/user/fuel?t=') + Date.now(),
         {
           headers: { 'Authorization': `Bearer ${token}` }
         }
@@ -137,7 +140,7 @@ export default function VideoGenerator() {
       console.log('📤 Sending payment initialization request...');
      
       const response = await axios.post(
-        'http://localhost:4000/api/payments/initialize',
+        buildApiUrl('/api/payments/initialize'),
         JSON.stringify({ userId: currentUserId }),
         {
           headers: { 
@@ -211,7 +214,7 @@ export default function VideoGenerator() {
       }
 
       const response = await axios.get(
-        `http://localhost:4000/api/payments/verify/${reference}?t=` + Date.now(),
+        buildApiUrl(`/api/payments/verify/${reference}?t=`) + Date.now(),
         {
           headers: { 'Authorization': `Bearer ${token}` }
         }
@@ -279,7 +282,7 @@ export default function VideoGenerator() {
       const token = localStorage.getItem('learn_lite_token');
       
       const response = await axios.post(
-        'http://localhost:4000/api/videos/generate',
+        buildApiUrl('/api/videos/generate'),
         { 
           prompt: prompt.trim(),
           language: selectedLanguage
