@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { MessageCircle, Facebook, Instagram } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Facebook, Instagram, MessageCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { getApiErrorMessage, groupAPI, publicAPI } from '../services/api';
 
@@ -24,6 +24,27 @@ function humanSize(bytes) {
   if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
   return Math.round(bytes / (1024 * 1024)) + ' MB';
 }
+
+const FALLBACK_SLIDES = [
+  {
+    id: 'slide-1',
+    title: 'Turn Complex Notes into Visual Insights',
+    subtitle: 'See concepts transformed into clean study visuals, diagrams, and guided summaries.',
+    kicker: 'Educational Visual Story'
+  },
+  {
+    id: 'slide-2',
+    title: 'Admin-Curated Media for the Homepage',
+    subtitle: 'Your assigned ops and social-media admin controls what appears on the landing page.',
+    kicker: 'Managed by Admin'
+  },
+  {
+    id: 'slide-3',
+    title: 'Learn Faster with Quizzes and Summaries',
+    subtitle: 'Build understanding with instant question generation and smart revision aids.',
+    kicker: 'AI Study Companion'
+  }
+];
 
 // Lightweight client-side sanitizer
 function sanitizeHTML(html) {
@@ -111,75 +132,122 @@ const Header = () => {
 // SLIDESHOW COMPONENT
 // ========================================
 
-const Slideshow = ({ onSlideChange }) => {
+const Slideshow = ({ mediaItems = [], onSlideChange }) => {
   const [current, setCurrent] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
 
-  const svgSlides = [
-    makeSVGDataURL(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800' preserveAspectRatio='xMidYMid slice'>
-      <defs><linearGradient id='g1' x1='0' x2='1' y1='0' y2='1'><stop offset='0' stop-color='#0b61ff'/><stop offset='1' stop-color='#6ad7ff'/></linearGradient><filter id='f'><feGaussianBlur stdDeviation='60'/></filter></defs>
-      <rect width='1200' height='800' fill='url(#g1)'/>
-      <g filter='url(#f)' opacity='0.96'><circle cx='220' cy='260' r='220' fill='#0a3b9a'/><ellipse cx='740' cy='480' rx='320' ry='220' fill='#00c6ff'/></g>
-    </svg>`),
-    makeSVGDataURL(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800' preserveAspectRatio='xMidYMid slice'>
-      <defs><linearGradient id='g2'><stop offset='0' stop-color='#ff7a00'/><stop offset='1' stop-color='#ff3da1'/></linearGradient><filter id='f2'><feGaussianBlur stdDeviation='50'/></filter></defs>
-      <rect width='1200' height='800' fill='url(#g2)'/>
-      <g filter='url(#f2)' opacity='0.92'><ellipse cx='300' cy='220' rx='240' ry='180' fill='#ffb35b'/><circle cx='820' cy='520' r='340' fill='#ff5b9a'/></g>
-    </svg>`),
-    makeSVGDataURL(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800' preserveAspectRatio='xMidYMid slice'>
-      <defs><linearGradient id='g3'><stop offset='0' stop-color='#4f46e5'/><stop offset='1' stop-color='#06b6d4'/></linearGradient><filter id='f3'><feGaussianBlur stdDeviation='55'/></filter></defs>
-      <rect width='1200' height='800' fill='url(#g3)'/>
-      <g filter='url(#f3)' opacity='0.95'><ellipse cx='260' cy='520' rx='340' ry='220' fill='#2b1061'/><circle cx='860' cy='260' r='200' fill='#08a5be'/></g>
-    </svg>`),
-    makeSVGDataURL(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800' preserveAspectRatio='xMidYMid slice'>
-      <defs><linearGradient id='g4'><stop offset='0' stop-color='#002b36'/><stop offset='1' stop-color='#00c853'/></linearGradient><filter id='f4'><feGaussianBlur stdDeviation='60'/></filter></defs>
-      <rect width='1200' height='800' fill='url(#g4)'/>
-      <g filter='url(#f4)' opacity='0.9'><circle cx='240' cy='200' r='220' fill='#003a4c'/><ellipse cx='760' cy='460' rx='360' ry='240' fill='#00ff9f'/></g>
-    </svg>`)
+  const fallbackSlides = [
+    {
+      id: 'fallback-1',
+      type: 'image',
+      url: makeSVGDataURL(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800' preserveAspectRatio='xMidYMid slice'><defs><linearGradient id='g1' x1='0' x2='1' y1='0' y2='1'><stop offset='0' stop-color='#0b61ff'/><stop offset='1' stop-color='#6ad7ff'/></linearGradient></defs><rect width='1200' height='800' fill='url(#g1)'/><circle cx='250' cy='260' r='180' fill='rgba(255,255,255,0.12)'/><circle cx='860' cy='520' r='260' fill='rgba(255,255,255,0.10)'/></svg>`),
+      title: 'Turn Complex Notes into Visual Insights',
+      subtitle: 'Convert dense learning material into clear, memorable study visuals.',
+      kicker: 'Educational Visual Story'
+    },
+    {
+      id: 'fallback-2',
+      type: 'image',
+      url: makeSVGDataURL(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800' preserveAspectRatio='xMidYMid slice'><defs><linearGradient id='g2' x1='0' x2='1' y1='0' y2='1'><stop offset='0' stop-color='#ff7a00'/><stop offset='1' stop-color='#ff3da1'/></linearGradient></defs><rect width='1200' height='800' fill='url(#g2)'/><circle cx='260' cy='220' r='200' fill='rgba(255,255,255,0.10)'/><circle cx='900' cy='500' r='300' fill='rgba(255,255,255,0.12)'/></svg>`),
+      title: 'Admin-Curated Media for the Homepage',
+      subtitle: 'Your assigned admin can update the public homepage visuals at any time.',
+      kicker: 'Managed by Admin'
+    },
+    {
+      id: 'fallback-3',
+      type: 'image',
+      url: makeSVGDataURL(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800' preserveAspectRatio='xMidYMid slice'><defs><linearGradient id='g3' x1='0' x2='1' y1='0' y2='1'><stop offset='0' stop-color='#4f46e5'/><stop offset='1' stop-color='#06b6d4'/></linearGradient></defs><rect width='1200' height='800' fill='url(#g3)'/><circle cx='240' cy='500' r='250' fill='rgba(255,255,255,0.09)'/><circle cx='840' cy='230' r='170' fill='rgba(255,255,255,0.11)'/></svg>`),
+      title: 'Learn Faster with Quizzes and Summaries',
+      subtitle: 'Build understanding with instant questions and concise revision aids.',
+      kicker: 'AI Study Companion'
+    }
   ];
 
-  const slideTexts = [
-    'Welcome to Learn Lite — Your AI-powered study partner!',
-    'Upload your notes and get instant quizzes tailored to your course.',
-    'Switch between dark and light mode for your comfort.',
-    'Try uploading a sample note to see how it works!'
-  ];
+  const slides = (mediaItems.length ? mediaItems : fallbackSlides).map((item, index) => ({
+    id: item.id || `${item.fileName || 'slide'}-${index}`,
+    type: item.type || item.mimeType?.startsWith('video/') ? 'video' : 'image',
+    url: item.url,
+    title: item.title || item.fileName || `Slide ${index + 1}`,
+    subtitle: item.description || item.caption || 'Curated by the assigned admin for homepage visitors.',
+    kicker: item.kicker || 'Admin-managed showcase'
+  }));
+
+  const activeSlide = slides[current % slides.length];
 
   useEffect(() => {
-    if (isHovered) return;
+    if (!slides.length || isHovered) return undefined;
 
     const interval = setInterval(() => {
-      setCurrent((prev) => {
-        const next = (prev + 1) % svgSlides.length;
-        if (onSlideChange) onSlideChange(slideTexts[next]);
-        return next;
-      });
-    }, 3500);
+      setCurrent((prev) => (prev + 1) % slides.length);
+    }, 4500);
 
     return () => clearInterval(interval);
-  }, [isHovered, svgSlides.length]);
+  }, [isHovered, slides.length]);
 
   useEffect(() => {
-    if (onSlideChange) onSlideChange(slideTexts[current]);
-  }, []);
+    if (activeSlide && onSlideChange) {
+      onSlideChange(activeSlide.title);
+    }
+  }, [activeSlide, onSlideChange]);
+
+  const goToSlide = (index) => setCurrent(index);
+  const goPrev = () => setCurrent((prev) => (prev - 1 + slides.length) % slides.length);
+  const goNext = () => setCurrent((prev) => (prev + 1) % slides.length);
 
   return (
-    <div
-      className="slideshow"
-      id="slideshow"
-      aria-hidden="true"
+    <section
+      className="carousel-shell hero-card"
+      aria-label="Homepage slideshow"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {svgSlides.map((url, idx) => (
-        <div
-          key={idx}
-          className={`slide ${idx === current ? 'show' : ''}`}
-          style={{ backgroundImage: `url("${url}")` }}
-          data-index={idx}
-        />
-      ))}
-    </div>
+      <div className="carousel-topbar">
+        <span className="kicker">Interactive slideshow</span>
+        <span className="carousel-admin-badge">Admin-controlled</span>
+      </div>
+
+      <div className="carousel-stage">
+        {slides.map((slide, idx) => (
+          <article key={slide.id} className={`carousel-slide ${idx === current ? 'is-active' : ''}`}>
+            {slide.type === 'video' ? (
+              <video src={slide.url} muted loop autoPlay playsInline className="carousel-media" />
+            ) : (
+              <img src={slide.url} alt={slide.title} className="carousel-media" />
+            )}
+
+            <div className="carousel-overlay">
+              <div className="carousel-overlay-inner">
+                <span className="carousel-kicker">{slide.kicker}</span>
+                <h3>{slide.title}</h3>
+                <p>{slide.subtitle}</p>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="carousel-actions">
+        <button type="button" className="carousel-arrow" onClick={goPrev} aria-label="Previous slide">
+          <ChevronLeft size={18} />
+        </button>
+        <button type="button" className="carousel-arrow" onClick={goNext} aria-label="Next slide">
+          <ChevronRight size={18} />
+        </button>
+      </div>
+
+      <div className="carousel-dots" role="tablist" aria-label="Slideshow navigation">
+        {slides.map((slide, index) => (
+          <button
+            key={slide.id}
+            type="button"
+            className={`carousel-dot ${index === current ? 'is-active' : ''}`}
+            onClick={() => goToSlide(index)}
+            aria-label={`Go to slide ${index + 1}`}
+            aria-pressed={index === current}
+          />
+        ))}
+      </div>
+    </section>
   );
 };
 
@@ -252,8 +320,12 @@ const FileUpload = ({ onFileChange, uploadedFile, onGenerate }) => {
   };
 
   return (
-    <aside className="uploader">
-      <div className="hero-card" style={{ padding: '12px' }}>
+    <aside className="hero-card quick-start-card">
+      <div className="quick-start-header">
+        <span className="kicker">AI • Study Smarter</span>
+        <h3 style={{ margin: '8px 0 0 0' }}>Upload notes and generate a quiz in seconds</h3>
+      </div>
+      <div className="quick-start-body">
         <div
           className="dropzone"
           id="dropzone"
@@ -279,7 +351,7 @@ const FileUpload = ({ onFileChange, uploadedFile, onGenerate }) => {
           <div className="muted" style={{ fontSize: '13px' }}>
             PDF, PNG, JPG — up to 20MB
           </div>
-          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+          <div className="quick-start-actions">
             <label className="btn" htmlFor="fileInput" style={{ cursor: 'pointer' }}>
               Browse files
             </label>
@@ -319,51 +391,6 @@ const FileUpload = ({ onFileChange, uploadedFile, onGenerate }) => {
             </div>
           </div>
         )}
-
-        <div
-          className="hero-card"
-          style={{
-            marginTop: '12px',
-            padding: '18px',
-            display: 'grid',
-            gap: '10px',
-            minHeight: '180px'
-          }}
-        >
-          <div className="kicker">Learn Lite</div>
-          <h3 style={{ margin: 0, fontSize: '20px' }}>AI-powered educational videos and smart study tools.</h3>
-          <p className="muted" style={{ margin: 0, lineHeight: 1.7 }}>
-            LearnLite is an AI-powered educational platform designed to simplify complex learning topics through
-            high-quality video visualizations. We provide students and educators with tools to generate educational
-            animations and summaries using advanced AI models. Our platform utilizes a Fuel credit system, where users
-            purchase digital credits (Fuel) to cover the API processing costs required to generate custom educational
-            videos. We use Paystack so users can securely top up their Fuel balance and continue their learning journey.
-          </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-            {['AI video visualizations', 'Summaries and quizzes', 'Fuel credits', 'Secure Paystack top-ups'].map((item) => (
-              <span
-                key={item}
-                className="pill"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontSize: '12px',
-                  padding: '8px 12px'
-                }}
-              >
-                {item}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-      <div className="hero-stats-row" style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
-        <div className="hero-card" style={{ flex: 1, padding: '12px' }}>
-          <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Estimated time</div>
-          <div style={{ fontWeight: 800, fontSize: '20px' }}>~ 30 sec</div>
-          <div style={{ fontSize: '12px', color: 'var(--muted)' }}>from upload to quiz</div>
-        </div>
       </div>
     </aside>
   );
@@ -408,11 +435,9 @@ const Hero = ({ uploadedFile, onFileChange }) => {
   const [modalType, setModalType] = useState(null);
   const [groupName, setGroupName] = useState('');
   const [joinCode, setJoinCode] = useState('');
-  const [createdCode, setCreatedCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [quickAccessLoading, setQuickAccessLoading] = useState(false);
   const [homeMediaItems, setHomeMediaItems] = useState([]);
-  const fileInputRef = useRef(null);
 
   useEffect(() => {
     const loadHomeMedia = async () => {
@@ -423,12 +448,12 @@ const Hero = ({ uploadedFile, onFileChange }) => {
         setHomeMediaItems([]);
       }
     };
+
     loadHomeMedia();
   }, []);
 
   const handleCreateGroup = () => {
     setGroupName('');
-    setCreatedCode('');
     setModalType('create');
   };
 
@@ -475,8 +500,6 @@ const Hero = ({ uploadedFile, onFileChange }) => {
     try {
       const result = await groupAPI.createGroup(groupName);
       if (result.success) {
-        setCreatedCode(result.group.joinCode);
-        alert(`Success! Your Class Code is: ${result.group.joinCode}`);
         localStorage.setItem('currentGroupId', result.group.id);
         localStorage.setItem('currentGroupCode', result.group.joinCode);
         setModalType(null);
@@ -501,7 +524,6 @@ const Hero = ({ uploadedFile, onFileChange }) => {
     try {
       const result = await groupAPI.joinGroupByCode(joinCode.trim());
       if (result.success) {
-        alert(`Successfully joined ${result.group.name}!`);
         localStorage.setItem('currentGroupId', result.group.id);
         localStorage.setItem('currentGroupCode', result.group.joinCode);
         setModalType(null);
@@ -532,7 +554,6 @@ const Hero = ({ uploadedFile, onFileChange }) => {
   };
 
   const handleExamples = () => {
-    // Trigger slide change (this is demo behavior)
     alert('Examples feature would cycle through slides');
   };
 
@@ -542,109 +563,77 @@ const Hero = ({ uploadedFile, onFileChange }) => {
 
   return (
     <>
-      <section className="hero-wrap" aria-label="Hero area" style={{ minHeight: 'calc(100vh - 95px)' }}>
-        <Slideshow onSlideChange={setSlideText} />
-        <div className="hero-overlay" aria-hidden="true" />
-        <div className="hero-content" role="region" aria-labelledby="hero-heading">
-          <div className="hero-card hero-top-card" style={{ minHeight: '220px' }}>
-            <span className="kicker">AI • Study Smarter</span>
-            <h2 id="hero-heading">Turn your lecture notes into ready-to-take quizzes — instantly.</h2>
-            <p className="muted">
-              Upload a PDF or an image of your notes and Learn Lite extracts key points, generates questions (MCQ &
-              short answer), and builds an interactive quiz tailored to your course.
+      <section className="hero-wrap" aria-label="Hero area">
+        <div className="hero-shell">
+          <div className="hero-main-column">
+            <div className="hero-card hero-lead-card">
+              <span className="kicker">Learn Lite • AI-Powered Study Companion</span>
+              <h2 id="hero-heading">Learn Lite: Your AI-Powered Study Companion - Turn Notes into Success.</h2>
+              <p className="hero-lead-copy">
+                Unlock new levels of understanding with instant quizzes and smart visualizations.
+              </p>
+              <div className="hero-slide-caption" aria-live="polite">
+                {slideText && <span className="pill hero-caption-pill">{slideText}</span>}
+              </div>
+              <p className="hero-admin-note">
+                The slideshow is controlled by the assigned admin through the homepage media manager.
+              </p>
+            </div>
+
+            <Slideshow mediaItems={homeMediaItems} onSlideChange={setSlideText} />
+          </div>
+
+          <div className="hero-side-column" role="region" aria-label="Quick start">
+            <FileUpload uploadedFile={uploadedFile} onFileChange={onFileChange} onGenerate={handleGenerateFromHome} />
+          </div>
+        </div>
+
+        <div className="hero-summary-grid">
+          <article className="hero-card hero-summary-card">
+            <div className="kicker">Features</div>
+            <h3>Educational videos, visualizations, summaries, and quizzes.</h3>
+            <p className="hero-summary-copy">
+              Learn Lite turns uploaded notes into visual explanations, concise summaries, and exam-ready question sets.
+              Fuel credits keep the AI processing simple and transparent.
             </p>
-            <div className="steps" id="slideTextArea" aria-live="polite">
-              {slideText && <div className="pill" style={{ fontWeight: 800 }}>{slideText}</div>}
+            <div className="tag-row">
+              {['AI video visualizations', 'Summaries and quizzes', 'Fuel credits'].map((tag) => (
+                <span key={tag} className="tag-pill">{tag}</span>
+              ))}
             </div>
-            <div style={{ marginTop: '18px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <button className="btn" id="ctaUpload" onClick={() => fileInputRef.current?.click()}>
-                Upload Notes
-              </button>
-              <button className="secondary" id="examplesBtn" onClick={handleExamples}>
-                Explore Examples
-              </button>
-              <button className="btn" id="createGroupBtn" onClick={handleCreateGroup}>
-                Create Class Group
-              </button>
-              <button className="secondary" id="joinGroupBtn" onClick={handleJoinGroup}>
-                Join Class Group
-              </button>
-              <button className="secondary" id="myGroupBtn" onClick={handleQuickAccessGroup} disabled={quickAccessLoading}>
-                {quickAccessLoading ? 'Opening...' : 'Go to My Group'}
-              </button>
+          </article>
+
+          <article className="hero-card hero-summary-card">
+            <div className="kicker">Secure Top-Up</div>
+            <h3>Paystack-powered fuel top-ups for reliable study sessions.</h3>
+            <p className="hero-summary-copy">
+              Add Fuel safely with Paystack, keep your learning flow uninterrupted, and return to quizzes whenever you
+              need a refresher.
+            </p>
+            <div className="tag-row">
+              {['Secure Paystack top-ups', 'Fuel credits', 'Fast payment flow'].map((tag) => (
+                <span key={tag} className="tag-pill tag-pill--accent">{tag}</span>
+              ))}
             </div>
-            <div style={{ marginTop: '14px', fontSize: '13px', color: 'var(--muted)' }}>
-              Pro tip: Combine typed notes and photos of whiteboard scribbles for richer quizzes.
-            </div>
-          </div>
-          <FileUpload
-            uploadedFile={uploadedFile}
-            onFileChange={onFileChange}
-            onGenerate={handleGenerateFromHome}
-          />
+          </article>
         </div>
 
-        <div className="hero-animation-stage" aria-hidden="true">
-          <div className="walk-scene">
-            <div className="walk-scene__path" />
-            <div className="walk-scene__goal">Greatness</div>
-            <div className="walker">
-              <span className="walker-head" />
-              <span className="walker-body" />
-              <span className="walker-leg walker-leg--left" />
-              <span className="walker-leg walker-leg--right" />
-            </div>
-          </div>
-
-          <div className="brain-scene">
-            <div className="brain-light brain-light--one" />
-            <div className="brain-light brain-light--two" />
-            <div className="brain-core">
-              <div className="brain-orbit" />
-              <div className="brain-orbit brain-orbit--alt" />
-            </div>
-          </div>
-        </div>
-
-        <div className="hero-home-media-strip" aria-label="Homepage uploaded media showcase">
-          {(homeMediaItems.length ? homeMediaItems : []).slice(0, 4).map((item) => (
-            <article key={item.id || item.url} className="hero-home-media-card">
-              {item.type === 'video' ? (
-                <video src={item.url} controls muted loop style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              ) : (
-                <img src={item.url} alt={item.title || 'Homepage media'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              )}
-              <div className="hero-home-media-title">{item.title || 'Learn Lite media'}</div>
-            </article>
-          ))}
+        <div className="hero-actions-row">
+          <button className="btn" id="createGroupBtn" onClick={handleCreateGroup}>
+            Create Class Group
+          </button>
+          <button className="secondary" id="joinGroupBtn" onClick={handleJoinGroup}>
+            Join Class Group
+          </button>
+          <button className="secondary" id="myGroupBtn" onClick={handleQuickAccessGroup} disabled={quickAccessLoading}>
+            {quickAccessLoading ? 'Opening...' : 'Go to My Group'}
+          </button>
+          <button className="secondary" id="examplesBtn" onClick={handleExamples}>
+            Explore Examples
+          </button>
         </div>
       </section>
 
-      <section className="section" aria-label="About Learn Lite" style={{ marginTop: '22px' }}>
-        <div className="hero-card" style={{ padding: '28px' }}>
-          <div className="kicker">About Learn Lite</div>
-          <h3 style={{ margin: '10px 0 12px 0', fontSize: '26px' }}>Built to simplify complex learning with AI video visualizations.</h3>
-          <p className="muted" style={{ margin: 0, lineHeight: 1.8, maxWidth: '980px' }}>
-            LearnLite is an AI-powered educational platform designed to simplify complex learning topics through
-            high-quality video visualizations. We provide students and educators with tools to generate educational
-            animations and summaries using advanced AI models. Our platform utilizes a Fuel credit system, where users
-            purchase digital credits (Fuel) to cover the API processing costs required to generate custom educational
-            videos. We are using Paystack to allow our users to securely top up their Fuel balance and continue their
-            learning journey.
-          </p>
-        </div>
-      </section>
-
-      {/* Hidden file input for CTA button */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="application/pdf,image/*"
-        style={{ display: 'none' }}
-        onChange={(e) => onFileChange(e.target.files?.[0])}
-      />
-
-      {/* Create Group Modal */}
       <Modal isOpen={modalType === 'create'} onClose={() => setModalType(null)}>
         <h3>Create Class Group</h3>
         <div style={{ margin: '18px 0 8px 0', fontSize: '16px' }}>Enter your class group name:</div>
@@ -656,37 +645,24 @@ const Hero = ({ uploadedFile, onFileChange }) => {
           onChange={(e) => setGroupName(e.target.value)}
           style={{ width: '100%', padding: '10px', marginBottom: '12px', borderRadius: '6px', border: '1px solid #ddd' }}
         />
-        <button 
-          className="btn" 
-          id="proceedCreate" 
-          onClick={proceedCreate}
-          disabled={loading}
-          style={{ width: '100%' }}
-        >
+        <button className="btn" id="proceedCreate" onClick={proceedCreate} disabled={loading} style={{ width: '100%' }}>
           {loading ? 'Creating...' : 'Create Group'}
         </button>
       </Modal>
 
-      {/* Join Group Modal */}
       <Modal isOpen={modalType === 'join'} onClose={() => setModalType(null)}>
         <h3>Join Class Group</h3>
         <div style={{ margin: '18px 0 8px 0', fontSize: '16px' }}>Enter the 6-letter class code:</div>
-        <input 
-          type="text" 
-          id="classIdInput" 
+        <input
+          type="text"
+          id="classIdInput"
           placeholder="e.g., MATH24"
           value={joinCode}
           onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
           maxLength="6"
           style={{ width: '100%', padding: '10px', marginBottom: '12px', borderRadius: '6px', border: '1px solid #ddd', textTransform: 'uppercase', letterSpacing: '2px' }}
         />
-        <button 
-          className="btn" 
-          id="proceedJoin" 
-          onClick={proceedJoin}
-          disabled={loading}
-          style={{ width: '100%' }}
-        >
+        <button className="btn" id="proceedJoin" onClick={proceedJoin} disabled={loading} style={{ width: '100%' }}>
           {loading ? 'Joining...' : 'Join Group'}
         </button>
       </Modal>
@@ -969,7 +945,6 @@ export default function Home() {
     <div className="container" id="app">
       <Header />
       <Hero uploadedFile={uploadedFile} onFileChange={setFile} />
-      <Features />
       <Footer onOpenContact={() => setIsContactOpen(true)} />
 
       <Modal isOpen={isContactOpen} onClose={() => setIsContactOpen(false)}>

@@ -29,6 +29,7 @@ const multer = require('multer');
 const { PrismaClient } = require('@prisma/client');
 const { sendWelcomeEmail, sendPasswordResetOtpEmail } = require('./utils/email');
 const { startWeeklyFinancialReportCron } = require('./cron/reports');
+const { seedManagedAdminAccounts } = require('./prisma/managed-admins');
 
 // CONFIGURATION
 // ========================================
@@ -5488,16 +5489,29 @@ app.use((req, res) => {
 // START SERVER
 // ========================================
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n✅ Learn Lite Backend Running`);
-  console.log(`📍 Host: 0.0.0.0 (localhost + 127.0.0.1)`);
-  console.log(`📍 Port: ${PORT}`);
-  console.log(`🌍 Environment: ${NODE_ENV}`);
-  console.log(`🔐 CORS Origin: ${FRONTEND_ORIGIN}`);
-  console.log(`🗄️  Database: ${DATABASE_URL || 'not configured'}`);
-  console.log(`🌐 API: http://localhost:${PORT} | http://127.0.0.1:${PORT}\n`);
+async function bootstrap() {
+  try {
+    await seedManagedAdminAccounts(prisma, {
+      logger: console,
+      showPasswords: NODE_ENV !== 'production'
+    });
+  } catch (error) {
+    console.error('Managed admin seeding failed on startup:', error);
+  }
 
-  startWeeklyFinancialReportCron(prisma);
-});
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n✅ Learn Lite Backend Running`);
+    console.log(`📍 Host: 0.0.0.0 (localhost + 127.0.0.1)`);
+    console.log(`📍 Port: ${PORT}`);
+    console.log(`🌍 Environment: ${NODE_ENV}`);
+    console.log(`🔐 CORS Origin: ${FRONTEND_ORIGIN}`);
+    console.log(`🗄️  Database: ${DATABASE_URL || 'not configured'}`);
+    console.log(`🌐 API: http://localhost:${PORT} | http://127.0.0.1:${PORT}\n`);
+
+    startWeeklyFinancialReportCron(prisma);
+  });
+}
+
+bootstrap();
 
 module.exports = app;
