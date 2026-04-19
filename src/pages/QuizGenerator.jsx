@@ -531,16 +531,11 @@ export default function QuizGenerator() {
       if (mentionsAI) {
         try {
           const aiResult = await aiAPI.chat(groupId, messageText);
-          if (aiResult?.success && aiResult?.message) {
+          if (!aiResult?.success) {
             appendWorkspaceMessage({
-              tone: 'incoming',
+              tone: 'system',
               title: '@learnlite',
-              text: String(aiResult.message).trim(),
-              replyTo: {
-                id: `${Date.now()}-prompt`,
-                title: currentUsername,
-                text: messageText
-              }
+              text: 'AI assistant is currently unavailable.'
             });
           }
         } catch (aiErr) {
@@ -551,6 +546,8 @@ export default function QuizGenerator() {
             text: aiMessage
           });
         }
+
+        await loadGroupMessages();
       }
     } catch (err) {
       const message = getApiErrorMessage(err, 'Unable to send message to your class group.');

@@ -128,9 +128,11 @@ app.use(cors({
 // BODY PARSER
 // ========================================
 
+const JSON_BODY_LIMIT = '20mb';
+
 // Middleware to capture raw body for webhook signature verification
 app.use(express.json({
-  limit: '10mb',
+  limit: JSON_BODY_LIMIT,
   strict: false,
   verify: (req, res, buf, encoding) => {
     if (req.path === '/api/paystack/webhook') {
@@ -138,7 +140,7 @@ app.use(express.json({
     }
   }
 }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.urlencoded({ limit: JSON_BODY_LIMIT, extended: true }));
 
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
@@ -423,7 +425,10 @@ function inspectPayload(input, depth = 0) {
   if (input == null) return { ok: true };
 
   if (typeof input === 'string') {
-    if (input.length > 50000) {
+    const isMediaDataUrl = /^data:(image|video)\/[a-zA-Z0-9.+-]+;base64,/i.test(input);
+    const maxStringLength = isMediaDataUrl ? 16 * 1024 * 1024 : 50000;
+
+    if (input.length > maxStringLength) {
       return { ok: false, reason: 'String payload too large' };
     }
     if (hasMaliciousPattern(input)) {
@@ -3702,7 +3707,7 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
       temperature: 0.55
     });
 
-    const responseText = String(aiResponse || '').trim();
+    const responseText = String(aiResponse || '').trim() || buildGeminiFallbackResponse(cleanMessage);
     await prisma.backup.create({
       data: {
         userId: requesterId,
