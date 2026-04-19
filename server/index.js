@@ -4696,6 +4696,50 @@ app.post('/api/admin/ops/home-media', authMiddleware, requireRoles(['SYSTEM_OWNE
   }
 });
 
+app.delete('/api/admin/ops/home-media/:id', authMiddleware, requireRoles(['SYSTEM_OWNER', 'OPS_MODERATOR']), async (req, res) => {
+  try {
+    const mediaId = String(req.params.id || '').trim();
+    if (!mediaId) {
+      return res.status(400).json({ success: false, error: 'Media id is required.' });
+    }
+
+    const existingItems = loadHomeMediaItems();
+    const targetItem = existingItems.find((item) => String(item?.id || '') === mediaId);
+
+    if (!targetItem) {
+      return res.status(404).json({ success: false, error: 'Media item not found.' });
+    }
+
+    const safeFileName = sanitizeUploadFileName(targetItem.fileName || '');
+    const filePath = safeFileName ? path.join(homeMediaPath, safeFileName) : null;
+
+    if (filePath && fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+
+    const updatedItems = existingItems.filter((item) => String(item?.id || '') !== mediaId);
+    saveHomeMediaItems(updatedItems);
+
+    await logStaffActivity({
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      action: 'OPS_REMOVE_HOMEPAGE_MEDIA',
+      target: targetItem.fileName || mediaId,
+      details: `${String(targetItem.type || 'media').toUpperCase()} removed from homepage display`
+    });
+
+    return res.json({
+      success: true,
+      message: 'Homepage media removed successfully.',
+      removedId: mediaId,
+      items: updatedItems
+    });
+  } catch (err) {
+    console.error('Ops homepage media remove error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
 app.get('/api/admin/socialmedia/high-score-kit', authMiddleware, requireRoles(['SYSTEM_OWNER', 'SOCIAL_MEDIA_CONTROLLER']), async (req, res) => {
   try {
     const weekStart = new Date();

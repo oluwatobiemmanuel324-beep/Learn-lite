@@ -25,6 +25,7 @@ export default function OpsModeratorDashboard() {
   const [mediaFile, setMediaFile] = useState(null);
   const [mediaItems, setMediaItems] = useState([]);
   const [mediaBusy, setMediaBusy] = useState(false);
+  const [mediaRemovingId, setMediaRemovingId] = useState(null);
   const [mediaMessage, setMediaMessage] = useState({ type: '', text: '' });
   const [visibleMediaCount, setVisibleMediaCount] = useState(6);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1280));
@@ -113,6 +114,28 @@ export default function OpsModeratorDashboard() {
       setMediaMessage({ type: 'error', text: getApiErrorMessage(err, 'Failed to upload homepage media.') });
     } finally {
       setMediaBusy(false);
+    }
+  };
+
+  const handleRemoveHomeMedia = async (item) => {
+    const mediaId = String(item?.id || '').trim();
+    if (!mediaId) {
+      setMediaMessage({ type: 'error', text: 'Cannot remove this media item because its id is missing.' });
+      return;
+    }
+
+    const confirmed = window.confirm(`Remove "${item?.title || 'Homepage media'}" from the homepage?`);
+    if (!confirmed) return;
+
+    try {
+      setMediaRemovingId(mediaId);
+      const result = await adminAPI.removeHomeMedia(mediaId);
+      setMediaItems(Array.isArray(result?.items) ? result.items : mediaItems.filter((media) => media.id !== mediaId));
+      setMediaMessage({ type: 'success', text: result?.message || 'Media removed successfully.' });
+    } catch (err) {
+      setMediaMessage({ type: 'error', text: getApiErrorMessage(err, 'Failed to remove homepage media.') });
+    } finally {
+      setMediaRemovingId(null);
     }
   };
 
@@ -402,6 +425,16 @@ export default function OpsModeratorDashboard() {
                 )}
                 <div className="p-3" style={{ overflow: 'hidden' }}>
                   <p className="m-0 text-sm font-semibold text-slate-100 truncate">{item.title || 'Homepage media'}</p>
+                  <div className="mt-3 flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveHomeMedia(item)}
+                      disabled={mediaRemovingId === item.id}
+                      className="dasher-btn-danger text-xs disabled:opacity-60"
+                    >
+                      {mediaRemovingId === item.id ? 'Removing...' : 'Remove'}
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
