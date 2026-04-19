@@ -305,6 +305,7 @@ export const adminAPI = {
   setUserSuspended: (userId, suspended) => client.patch(`/api/admin/ops/users/${userId}/suspension`, { suspended }),
   uploadHomeMedia: (payload) => client.post('/api/admin/ops/home-media', payload),
   removeHomeMedia: (mediaId) => client.delete(`/api/admin/ops/home-media/${mediaId}`),
+  restoreHomeMedia: (mediaId, item) => client.post(`/api/admin/ops/home-media/${mediaId}/restore`, { item }),
   getHomeMedia: () => client.get('/api/home-media'),
   getSocialMediaWorkplace: () => client.get('/api/admin/socialmedia/workplace'),
   getSocialMarketingFeed: () => client.get('/api/admin/socialmedia/marketing-feed'),
