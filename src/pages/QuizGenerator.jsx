@@ -468,7 +468,7 @@ export default function QuizGenerator() {
     if (!draftMessage.trim()) return;
 
     const messageText = draftMessage.trim();
-    const mentionsAI = /@learnlite/i.test(messageText);
+    const mentionsAI = /\b@?learnlite\b/i.test(messageText);
     const outgoingReply = replyTarget
       ? {
           id: replyTarget.id,
@@ -531,7 +531,18 @@ export default function QuizGenerator() {
       if (mentionsAI) {
         try {
           const aiResult = await aiAPI.chat(groupId, messageText);
-          if (!aiResult?.success) {
+          if (aiResult?.success && aiResult?.message) {
+            appendWorkspaceMessage({
+              tone: 'incoming',
+              title: '@learnlite',
+              text: String(aiResult.message).trim(),
+              replyTo: {
+                id: `${Date.now()}-prompt`,
+                title: currentUsername,
+                text: messageText
+              }
+            });
+          } else {
             appendWorkspaceMessage({
               tone: 'system',
               title: '@learnlite',

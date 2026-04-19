@@ -165,7 +165,7 @@ const Slideshow = ({ mediaItems = [], onSlideChange }) => {
 
   const slides = (mediaItems.length ? mediaItems : fallbackSlides).map((item, index) => ({
     id: item.id || `${item.fileName || 'slide'}-${index}`,
-    type: item.type || item.mimeType?.startsWith('video/') ? 'video' : 'image',
+    type: item.type || (item.mimeType?.startsWith('video/') ? 'video' : 'image'),
     url: item.url,
     title: item.title || item.fileName || `Slide ${index + 1}`,
     subtitle: item.description || item.caption || 'Curated by the assigned admin for homepage visitors.',

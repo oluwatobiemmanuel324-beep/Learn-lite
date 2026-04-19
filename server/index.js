@@ -3680,18 +3680,15 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
       });
     }
 
-    // Check if message mentions @learnlite
-    if (!/@learnlite/i.test(message)) {
+    // Check if message mentions learnlite with or without @
+    if (!/\b@?learnlite\b/i.test(message)) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Message must mention @learnlite to get a response' 
+        error: 'Message must mention learnlite to get a response' 
       });
     }
 
-    const cleanMessage = String(message || '').replace(/@learnlite/ig, '').trim();
-    if (!cleanMessage) {
-      return res.status(400).json({ success: false, error: 'Please include a message after @learnlite' });
-    }
+    const cleanMessage = String(message || '').replace(/\b@?learnlite\b/ig, '').trim() || 'Share a quick CBT study tip for the class.';
 
     const prompt = [
       'You are Learn Lite AI tutor for CBT exam preparation.',
