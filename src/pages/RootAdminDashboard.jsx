@@ -1,6 +1,6 @@
 import React from 'react';
-import AdminDashboard from './AdminDashboard';
+import SystemOwnerDashboard from './dashboard/SystemOwnerDashboard';
 
 export default function RootAdminDashboard() {
-  return <AdminDashboard forcedRole="ROOT_ADMIN" />;
+  return <SystemOwnerDashboard dashboardRole="ROOT_ADMIN" />;
 }

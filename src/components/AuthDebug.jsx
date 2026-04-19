@@ -1,5 +1,14 @@
 import React, { useState, useEffect } from 'react';
 
+function safeParseUser(rawValue) {
+  try {
+    const parsed = JSON.parse(rawValue || 'null');
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function AuthDebug() {
   const [authState, setAuthState] = useState({
     token: null,
@@ -13,7 +22,7 @@ export default function AuthDebug() {
     const updateAuth = () => {
       const token = localStorage.getItem('learn_lite_token');
       const role = localStorage.getItem('user_role');
-      const user = JSON.parse(localStorage.getItem('learn_lite_user') || 'null');
+      const user = safeParseUser(localStorage.getItem('learn_lite_user'));
       
       setAuthState({
         token: token ? `${token.slice(0, 20)}...` : null,

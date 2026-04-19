@@ -1,7 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { MessageCircle, Facebook, Instagram } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { getApiErrorMessage, groupAPI } from '../services/api';
+import { getApiErrorMessage, groupAPI, publicAPI } from '../services/api';
+
+const SOCIAL_LINKS = {
+  whatsapp: 'https://whatsapp.com/channel/0029Vb7NksbEKyZPSlNMg644',
+  facebook: 'https://www.facebook.com/share/185cDUg3Lk/',
+  instagram: 'https://www.instagram.com/learnlite.official?igsh=MXFkdjdlanQzc2k5OA=='
+};
 
 // ========================================
 // UTILITY FUNCTIONS
@@ -39,7 +46,16 @@ function sanitizeHTML(html) {
 // ========================================
 
 const Header = () => {
+  const navigate = useNavigate();
   const { theme, toggleTheme } = useApp();
+
+  const handleGoBack = () => {
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    navigate('/');
+  };
 
   return (
     <header>
@@ -171,7 +187,7 @@ const Slideshow = ({ onSlideChange }) => {
 // FILE UPLOAD COMPONENT
 // ========================================
 
-const FileUpload = ({ onFileChange, uploadedFile }) => {
+const FileUpload = ({ onFileChange, uploadedFile, onGenerate }) => {
   const [preview, setPreview] = useState(null);
   const [qCount, setQCount] = useState(10);
   const fileInputRef = useRef(null);
@@ -207,16 +223,25 @@ const FileUpload = ({ onFileChange, uploadedFile }) => {
     e.preventDefault();
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!uploadedFile) {
       alert('Please upload a file first.');
       return;
     }
+
+    if (!onGenerate) {
+      alert('Quiz generator is not available right now.');
+      return;
+    }
+
     setGenerating(true);
-    setTimeout(() => {
+    try {
+      await onGenerate(uploadedFile, { questionCount: qCount });
+    } catch (err) {
+      alert('Unable to start quiz generation right now. Please try again.');
+    } finally {
       setGenerating(false);
-      alert('Quiz generated! (Demo) — In production you would be redirected to your quiz.');
-    }, 1600);
+    }
   };
 
   const handleSample = () => {
@@ -294,28 +319,50 @@ const FileUpload = ({ onFileChange, uploadedFile }) => {
             </div>
           </div>
         )}
+
+        <div
+          className="hero-card"
+          style={{
+            marginTop: '12px',
+            padding: '18px',
+            display: 'grid',
+            gap: '10px',
+            minHeight: '180px'
+          }}
+        >
+          <div className="kicker">Learn Lite</div>
+          <h3 style={{ margin: 0, fontSize: '20px' }}>AI-powered educational videos and smart study tools.</h3>
+          <p className="muted" style={{ margin: 0, lineHeight: 1.7 }}>
+            LearnLite is an AI-powered educational platform designed to simplify complex learning topics through
+            high-quality video visualizations. We provide students and educators with tools to generate educational
+            animations and summaries using advanced AI models. Our platform utilizes a Fuel credit system, where users
+            purchase digital credits (Fuel) to cover the API processing costs required to generate custom educational
+            videos. We use Paystack so users can securely top up their Fuel balance and continue their learning journey.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {['AI video visualizations', 'Summaries and quizzes', 'Fuel credits', 'Secure Paystack top-ups'].map((item) => (
+              <span
+                key={item}
+                className="pill"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '12px',
+                  padding: '8px 12px'
+                }}
+              >
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
-      <div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
+      <div className="hero-stats-row" style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
         <div className="hero-card" style={{ flex: 1, padding: '12px' }}>
           <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Estimated time</div>
           <div style={{ fontWeight: 800, fontSize: '20px' }}>~ 30 sec</div>
           <div style={{ fontSize: '12px', color: 'var(--muted)' }}>from upload to quiz</div>
-        </div>
-        <div
-          className="hero-card"
-          style={{
-            padding: '12px',
-            width: '110px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}
-        >
-          <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Questions</div>
-          <div style={{ fontWeight: 800, fontSize: '20px' }} id="qCount">
-            {qCount}
-          </div>
         </div>
       </div>
     </aside>
@@ -364,7 +411,20 @@ const Hero = ({ uploadedFile, onFileChange }) => {
   const [createdCode, setCreatedCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [quickAccessLoading, setQuickAccessLoading] = useState(false);
+  const [homeMediaItems, setHomeMediaItems] = useState([]);
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    const loadHomeMedia = async () => {
+      try {
+        const res = await publicAPI.getHomeMedia();
+        setHomeMediaItems(Array.isArray(res?.items) ? res.items : []);
+      } catch (err) {
+        setHomeMediaItems([]);
+      }
+    };
+    loadHomeMedia();
+  }, []);
 
   const handleCreateGroup = () => {
     setGroupName('');
@@ -476,13 +536,17 @@ const Hero = ({ uploadedFile, onFileChange }) => {
     alert('Examples feature would cycle through slides');
   };
 
+  const handleGenerateFromHome = async () => {
+    navigate('/generate-quiz', { state: { autoGenerate: true } });
+  };
+
   return (
     <>
-      <section className="hero-wrap" aria-label="Hero area">
+      <section className="hero-wrap" aria-label="Hero area" style={{ minHeight: 'calc(100vh - 95px)' }}>
         <Slideshow onSlideChange={setSlideText} />
         <div className="hero-overlay" aria-hidden="true" />
         <div className="hero-content" role="region" aria-labelledby="hero-heading">
-          <div className="hero-card" style={{ minHeight: '260px' }}>
+          <div className="hero-card hero-top-card" style={{ minHeight: '220px' }}>
             <span className="kicker">AI • Study Smarter</span>
             <h2 id="hero-heading">Turn your lecture notes into ready-to-take quizzes — instantly.</h2>
             <p className="muted">
@@ -516,7 +580,58 @@ const Hero = ({ uploadedFile, onFileChange }) => {
           <FileUpload
             uploadedFile={uploadedFile}
             onFileChange={onFileChange}
+            onGenerate={handleGenerateFromHome}
           />
+        </div>
+
+        <div className="hero-animation-stage" aria-hidden="true">
+          <div className="walk-scene">
+            <div className="walk-scene__path" />
+            <div className="walk-scene__goal">Greatness</div>
+            <div className="walker">
+              <span className="walker-head" />
+              <span className="walker-body" />
+              <span className="walker-leg walker-leg--left" />
+              <span className="walker-leg walker-leg--right" />
+            </div>
+          </div>
+
+          <div className="brain-scene">
+            <div className="brain-light brain-light--one" />
+            <div className="brain-light brain-light--two" />
+            <div className="brain-core">
+              <div className="brain-orbit" />
+              <div className="brain-orbit brain-orbit--alt" />
+            </div>
+          </div>
+        </div>
+
+        <div className="hero-home-media-strip" aria-label="Homepage uploaded media showcase">
+          {(homeMediaItems.length ? homeMediaItems : []).slice(0, 4).map((item) => (
+            <article key={item.id || item.url} className="hero-home-media-card">
+              {item.type === 'video' ? (
+                <video src={item.url} controls muted loop style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <img src={item.url} alt={item.title || 'Homepage media'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              )}
+              <div className="hero-home-media-title">{item.title || 'Learn Lite media'}</div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section" aria-label="About Learn Lite" style={{ marginTop: '22px' }}>
+        <div className="hero-card" style={{ padding: '28px' }}>
+          <div className="kicker">About Learn Lite</div>
+          <h3 style={{ margin: '10px 0 12px 0', fontSize: '26px' }}>Built to simplify complex learning with AI video visualizations.</h3>
+          <p className="muted" style={{ margin: 0, lineHeight: 1.8, maxWidth: '980px' }}>
+            LearnLite is an AI-powered educational platform designed to simplify complex learning topics through
+            high-quality video visualizations. We provide students and educators with tools to generate educational
+            animations and summaries using advanced AI models. Our platform utilizes a Fuel credit system, where users
+            purchase digital credits (Fuel) to cover the API processing costs required to generate custom educational
+            videos. We are using Paystack to allow our users to securely top up their Fuel balance and continue their
+            learning journey.
+          </p>
         </div>
       </section>
 
@@ -792,6 +907,12 @@ const Footer = ({ onOpenContact }) => {
         © Learn Lite — built for students • <span className="muted">Made with ♥</span>
       </div>
       <div>
+        <a href={SOCIAL_LINKS.whatsapp} target="_blank" rel="noopener noreferrer" aria-label="WhatsApp" title="WhatsApp" style={{ display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle' }}><MessageCircle size={15} /></a>
+        {' '}
+        <a href={SOCIAL_LINKS.facebook} target="_blank" rel="noopener noreferrer" aria-label="Facebook" title="Facebook" style={{ display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle' }}><Facebook size={15} /></a>
+        {' '}
+        <a href={SOCIAL_LINKS.instagram} target="_blank" rel="noopener noreferrer" aria-label="Instagram" title="Instagram" style={{ display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle' }}><Instagram size={15} /></a>
+        {' '}|{' '}
         <button
           type="button"
           onClick={onOpenContact}
@@ -815,7 +936,7 @@ export default function Home() {
 
   const handleContactSubmit = async (formData) => {
     try {
-      const response = await fetch('http://localhost:4000/api/contact', {
+      const response = await fetch('/api/contact', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

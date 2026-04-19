@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "id": "890e400b-77bd-4ccf-91ab-51daeb4d11a8",
+      "title": "Homepage media",
+      "type": "video",
+      "mimeType": "video/mp4",
+      "fileName": "1776190324285-5ed566bcec7713c428d5fba155aab22b.mp4",
+      "url": "http://localhost:4000/home-media/1776190324285-5ed566bcec7713c428d5fba155aab22b.mp4",
+      "uploadedAt": "2026-04-14T18:12:05.195Z",
+      "uploadedBy": "oluwatobiemmanuel324@gmail.com"
+    }
+  ]
+}

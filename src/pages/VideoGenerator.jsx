@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import axios from 'axios';
 
 export default function VideoGenerator() {
   const { theme } = useApp();
+  const location = useLocation();
   const navigate = useNavigate();
   
   // State Management
@@ -18,6 +19,13 @@ export default function VideoGenerator() {
   const [loadingFuel, setLoadingFuel] = useState(true);
   const [showPaystack, setShowPaystack] = useState(false);
   const [processingPayment, setProcessingPayment] = useState(false);
+
+  useEffect(() => {
+    const prefilledPrompt = location.state?.prefillPrompt;
+    if (typeof prefilledPrompt === 'string' && prefilledPrompt.trim()) {
+      setPrompt(prefilledPrompt.trim());
+    }
+  }, [location.state]);
 
   const getUserIdFromToken = (token) => {
     try {
@@ -48,7 +56,7 @@ export default function VideoGenerator() {
   useEffect(() => {
     const checkPaymentCallback = async () => {
       const urlParams = new URLSearchParams(window.location.search);
-      const reference = urlParams.get('reference');
+      const reference = urlParams.get('reference') || urlParams.get('trxref');
       
       if (reference) {
         console.log('🔗 Payment callback detected:', reference);
@@ -326,33 +334,37 @@ export default function VideoGenerator() {
   };
 
   return (
-    <div className="container" style={{ minHeight: '100vh', paddingTop: '60px' }}>
+    <div className="container video-generator-page" style={{ minHeight: '100vh', width: '100%', maxWidth: '1240px', paddingTop: '84px', paddingLeft: 'clamp(12px, 3vw, 24px)', paddingRight: 'clamp(12px, 3vw, 24px)' }}>
       {/* Header with Back Button */}
-      <header style={{ 
-        position: 'fixed', 
-        top: 0, 
-        left: 0, 
-        right: 0, 
-        background: 'var(--card)',
-        backdropFilter: 'blur(8px)',
-        borderBottom: '1px solid var(--glass)',
-        padding: '16px 32px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '16px',
-        justifyContent: 'space-between',
-        zIndex: 100
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <button 
+      <header
+        className="video-generator-header"
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          background: 'var(--card)',
+          backdropFilter: 'blur(8px)',
+          borderBottom: '1px solid var(--glass)',
+          padding: '10px clamp(10px, 3vw, 24px)',
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: '10px',
+          justifyContent: 'space-between',
+          zIndex: 100
+        }}
+      >
+        <div className="video-generator-header-left" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', minWidth: 0 }}>
+          <button
             onClick={() => navigate('/')}
-            className="secondary"
-            style={{ padding: '8px 16px' }}
+            className="secondary video-generator-back-btn"
+            style={{ padding: '6px 10px', fontSize: '12px' }}
           >
             ← Back
           </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div className="logo" style={{ width: '40px', height: '40px', overflow: 'hidden' }}>
+          <div className="video-generator-title-wrap" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div className="logo video-generator-logo" style={{ width: '34px', height: '34px', overflow: 'hidden' }}>
               <img
                 src="/app-icon.png"
                 alt="Learn Lite logo"
@@ -360,63 +372,71 @@ export default function VideoGenerator() {
               />
             </div>
             <div>
-              <h2 style={{ margin: 0, fontSize: '18px' }}>Video Generator</h2>
-              <div className="muted" style={{ fontSize: '12px' }}>AI-powered video tutorials</div>
+              <h2 className="video-generator-title" style={{ margin: 0, fontSize: '16px' }}>Video Generator</h2>
+              <div className="muted video-generator-subtitle" style={{ fontSize: '11px' }}>AI-powered video tutorials</div>
             </div>
           </div>
         </div>
 
-        {/* Fuel Display and Buy Button */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div style={{
-            padding: '8px 16px',
-            background: 'var(--glass)',
-            borderRadius: '8px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
-            <span style={{ fontSize: '18px' }}>⚡</span>
-            <span style={{ fontWeight: 700 }}>
-              {loadingFuel ? '...' : fuelBalance}
-            </span>
-            <span className="muted" style={{ fontSize: '12px' }}>Fuel</span>
+        <div className="video-generator-fuel-controls" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <div
+            className="video-generator-fuel-badge"
+            style={{
+              padding: '6px 10px',
+              background: 'var(--glass)',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <span style={{ fontSize: '14px' }}>⚡</span>
+            <span style={{ fontWeight: 700, fontSize: '13px' }}>{loadingFuel ? '...' : fuelBalance}</span>
+            <span className="muted video-generator-fuel-word" style={{ fontSize: '11px' }}>Fuel</span>
           </div>
+
           <button
             onClick={handleBuyFuel}
             disabled={processingPayment}
-            className="btn"
+            className="btn video-generator-action-btn"
             style={{
-              padding: '8px 16px',
-              fontSize: '14px',
-              fontWeight: 700
+              padding: '6px 10px',
+              fontSize: '12px',
+              fontWeight: 700,
+              whiteSpace: 'nowrap'
             }}
           >
-            💳 {processingPayment ? 'Redirecting to Paystack...' : 'Buy Fuel'}
+            <span>💳 </span>
+            <span className="video-generator-label-full">{processingPayment ? 'Redirecting...' : 'Buy Fuel'}</span>
+            <span className="video-generator-label-short">{processingPayment ? '...' : 'Buy'}</span>
           </button>
+
           <button
             onClick={fetchFuelBalance}
             disabled={loadingFuel}
-            className="btn"
+            className="btn video-generator-action-btn"
             style={{
-              padding: '8px 16px',
-              fontSize: '14px',
+              padding: '6px 10px',
+              fontSize: '12px',
               fontWeight: 700,
               background: 'var(--secondary)',
               opacity: loadingFuel ? 0.5 : 1,
-              cursor: loadingFuel ? 'not-allowed' : 'pointer'
+              cursor: loadingFuel ? 'not-allowed' : 'pointer',
+              whiteSpace: 'nowrap'
             }}
             title="Manually refresh fuel balance"
           >
-            🔄 {loadingFuel ? 'Refreshing...' : 'Refresh Fuel'}
+            <span>🔄 </span>
+            <span className="video-generator-label-full">{loadingFuel ? 'Refreshing...' : 'Refresh Fuel'}</span>
+            <span className="video-generator-label-short">{loadingFuel ? '...' : 'Refresh'}</span>
           </button>
         </div>
       </header>
 
       {/* Main Content */}
-      <div style={{ maxWidth: '900px', margin: '0 auto', padding: '40px 20px' }}>
+      <div style={{ maxWidth: '1240px', margin: '0 auto', padding: 'clamp(18px, 3vw, 40px) 0 40px', width: '100%' }}>
         {/* Video Generator Card */}
-        <div className="hero-card" style={{ padding: '32px', marginBottom: '30px' }}>
+        <div className="hero-card video-generator-hero" style={{ padding: 'clamp(18px, 3vw, 32px)', marginBottom: '30px' }}>
           <div style={{ textAlign: 'center', marginBottom: '24px' }}>
             <div style={{ fontSize: '60px', marginBottom: '12px' }}>🎬</div>
             <h1 style={{ 
@@ -733,7 +753,7 @@ export default function VideoGenerator() {
         )}
 
         {/* Info Cards */}
-        <div style={{ 
+        <div className="video-generator-info-grid" style={{ 
           display: 'grid', 
           gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', 
           gap: '20px',
@@ -800,72 +820,20 @@ export default function VideoGenerator() {
           </div>
         </div>
 
-        {/* Status Timeline */}
+        {/* Platform Overview */}
         <div className="hero-card" style={{ padding: '30px', marginTop: '40px' }}>
-          <h3 style={{ marginBottom: '20px', fontSize: '20px' }}>Development Status</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ 
-                width: '24px', 
-                height: '24px', 
-                borderRadius: '50%', 
-                background: 'var(--accent)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '12px'
-              }}>✓</div>
-              <span>Backend API Integration</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ 
-                width: '24px', 
-                height: '24px', 
-                borderRadius: '50%', 
-                background: 'var(--accent)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '12px'
-              }}>✓</div>
-              <span>Google Cloud TTS Setup</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ 
-                width: '24px', 
-                height: '24px', 
-                borderRadius: '50%', 
-                background: 'var(--glass)',
-                border: '2px solid var(--accent)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '12px'
-              }}>⏳</div>
-              <span className="muted">Frontend Video Preview</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ 
-                width: '24px', 
-                height: '24px', 
-                borderRadius: '50%', 
-                background: 'var(--glass)',
-                border: '2px solid var(--muted)',
-                opacity: 0.5
-              }}></div>
-              <span className="muted">HeyGen Video Generation</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ 
-                width: '24px', 
-                height: '24px', 
-                borderRadius: '50%', 
-                background: 'var(--glass)',
-                border: '2px solid var(--muted)',
-                opacity: 0.5
-              }}></div>
-              <span className="muted">Video Customization Options</span>
-            </div>
+          <div className="kicker">Learn Lite Studio</div>
+          <h3 style={{ margin: '10px 0 14px', fontSize: '24px' }}>Professional video generation for educators and learners.</h3>
+          <p className="muted" style={{ margin: 0, lineHeight: 1.8, maxWidth: '980px' }}>
+            Learn Lite turns prompts into polished educational videos, summaries, and visual explanations. Fuel credits
+            cover the API processing cost behind each generation, and Paystack keeps top-ups secure so users can keep
+            learning without interruption. Use this page to craft clear, accurate, and visually engaging learning videos
+            from any topic or lesson prompt.
+          </p>
+          <div className="video-generator-badges" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '16px' }}>
+            {['Educational videos', 'Fuel credit system', 'Paystack top-ups', 'AI summaries'].map((item) => (
+              <span key={item} className="pill" style={{ padding: '8px 12px', fontSize: '12px' }}>{item}</span>
+            ))}
           </div>
         </div>
       </div>

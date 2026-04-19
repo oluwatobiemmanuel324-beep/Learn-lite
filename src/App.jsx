@@ -7,14 +7,28 @@ import Signup from './pages/Signup';
 import QuizGenerator from './pages/QuizGenerator';
 import VideoGenerator from './pages/VideoGenerator';
 import AdminDashboard from './pages/AdminDashboard';
+import RootAdminDashboard from './pages/RootAdminDashboard';
 import SystemOwnerDashboard from './pages/SystemOwnerDashboard';
 import FinanceControllerDashboard from './pages/FinanceControllerDashboard';
 import AcademicRegistrarDashboard from './pages/AcademicRegistrarDashboard';
 import OpsModeratorDashboard from './pages/OpsModeratorDashboard';
+import OpsActiveUsersLogins from './pages/dashboard/OpsActiveUsersLogins';
 import SocialMediaControllerDashboard from './pages/SocialMediaControllerDashboard';
 import AuthDebug from './components/AuthDebug';
+import AppErrorBoundary from './components/AppErrorBoundary';
+import ProtectedAdminRoute from './components/ProtectedAdminRoute';
+import UnauthorizedPage from './pages/UnauthorizedPage';
 import { authAPI } from './services/api';
 import './styles/global.css';
+
+function safeParseUser(rawValue) {
+  try {
+    const parsed = JSON.parse(rawValue || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 // ========================================
 // APP ROUTES WITH TOKEN VERIFICATION
@@ -77,11 +91,25 @@ function AppRoutes() {
       syncAuthFromStorage();
     };
 
-    window.addEventListener('storage', onAuthChanged);
+    const onStorage = (event) => {
+      // Ignore unrelated localStorage writes (theme/sidebar/profile) from other tabs.
+      if (!event || !event.key) {
+        return;
+      }
+
+      const authKeys = new Set(['learn_lite_token', 'learn_lite_user', 'user_id', 'user_role']);
+      if (!authKeys.has(event.key)) {
+        return;
+      }
+
+      syncAuthFromStorage();
+    };
+
+    window.addEventListener('storage', onStorage);
     window.addEventListener('learnlite-auth-changed', onAuthChanged);
 
     return () => {
-      window.removeEventListener('storage', onAuthChanged);
+      window.removeEventListener('storage', onStorage);
       window.removeEventListener('learnlite-auth-changed', onAuthChanged);
     };
   }, []);
@@ -115,7 +143,7 @@ function AppRoutes() {
     const rolePathMap = {
       SYSTEM_OWNER: '/dashboard/system-owner',
       ROOT_ADMIN: '/dashboard/root-admin',
-      ADMIN: '/dashboard/root-admin',
+      ADMIN: '/admin/unauthorized',
       FINANCE_CONTROLLER: '/dashboard/finance-controller',
       ACADEMIC_REGISTRAR: '/dashboard/academic-registrar',
       OPS_MODERATOR: '/dashboard/ops-moderator',
@@ -124,24 +152,6 @@ function AppRoutes() {
 
     const target = rolePathMap[role] || '/';
     return <Navigate to={target} replace />;
-  };
-
-  const RoleProtectedRoute = ({ allowedRoles, children }) => {
-    const hasToken = Boolean(localStorage.getItem('learn_lite_token'));
-    if (!isAuthenticated && !hasToken) {
-      return <Navigate to="/login" replace />;
-    }
-
-    const role = currentRole || localStorage.getItem('user_role') || 'USER';
-    if (role === 'SYSTEM_OWNER') {
-      return children;
-    }
-
-    if (!allowedRoles.includes(role)) {
-      return <Navigate to="/admin" replace />;
-    }
-
-    return children;
   };
 
   const PublicOnlyRoute = ({ children }) => {
@@ -174,54 +184,76 @@ function AppRoutes() {
       <Route path="/generate-quiz/:id" element={<QuizGenerator />} />
       <Route path="/generate-video" element={<VideoGenerator />} />
       <Route path="/admin" element={<AdminRouteRedirect />} />
+      <Route path="/admin/unauthorized" element={<UnauthorizedPage />} />
 
       <Route
         path="/dashboard/system-owner"
         element={(
-          <RoleProtectedRoute allowedRoles={['SYSTEM_OWNER']}>
+          <ProtectedAdminRoute allowedRoles={['SYSTEM_OWNER', 'ROOT_ADMIN']}>
             <SystemOwnerDashboard />
-          </RoleProtectedRoute>
+          </ProtectedAdminRoute>
         )}
       />
       <Route
         path="/dashboard/root-admin"
         element={(
-          <RoleProtectedRoute allowedRoles={['SYSTEM_OWNER', 'ROOT_ADMIN', 'ADMIN']}>
-            <AdminDashboard pageTitle="Root Admin Dashboard" allowedRoles={['SYSTEM_OWNER', 'ROOT_ADMIN', 'ADMIN']} />
-          </RoleProtectedRoute>
+          <ProtectedAdminRoute allowedRoles={['SYSTEM_OWNER', 'ROOT_ADMIN']}>
+            <RootAdminDashboard />
+          </ProtectedAdminRoute>
+        )}
+      />
+      <Route
+        path="/admin/users/:userId"
+        element={(
+          <ProtectedAdminRoute allowedRoles={['SYSTEM_OWNER', 'ROOT_ADMIN']}>
+            <AdminDashboard pageTitle="Mission Control" allowedRoles={['SYSTEM_OWNER']} />
+          </ProtectedAdminRoute>
         )}
       />
       <Route
         path="/dashboard/finance-controller"
         element={(
-          <RoleProtectedRoute allowedRoles={['SYSTEM_OWNER', 'FINANCE_CONTROLLER']}>
+          <ProtectedAdminRoute allowedRoles={['SYSTEM_OWNER', 'ROOT_ADMIN', 'FINANCE_CONTROLLER']}>
             <FinanceControllerDashboard />
-          </RoleProtectedRoute>
+          </ProtectedAdminRoute>
         )}
       />
       <Route
         path="/dashboard/academic-registrar"
         element={(
-          <RoleProtectedRoute allowedRoles={['SYSTEM_OWNER', 'ACADEMIC_REGISTRAR']}>
+          <ProtectedAdminRoute allowedRoles={['SYSTEM_OWNER', 'ROOT_ADMIN', 'ACADEMIC_REGISTRAR']}>
             <AcademicRegistrarDashboard />
-          </RoleProtectedRoute>
+          </ProtectedAdminRoute>
         )}
       />
       <Route
         path="/dashboard/ops-moderator"
         element={(
-          <RoleProtectedRoute allowedRoles={['SYSTEM_OWNER', 'OPS_MODERATOR']}>
+          <ProtectedAdminRoute allowedRoles={['SYSTEM_OWNER', 'ROOT_ADMIN', 'OPS_MODERATOR']}>
             <OpsModeratorDashboard />
-          </RoleProtectedRoute>
+          </ProtectedAdminRoute>
+        )}
+      />
+      <Route
+        path="/dashboard/ops-moderator/active-users"
+        element={(
+          <ProtectedAdminRoute allowedRoles={['SYSTEM_OWNER', 'ROOT_ADMIN', 'OPS_MODERATOR']}>
+            <OpsActiveUsersLogins />
+          </ProtectedAdminRoute>
         )}
       />
       <Route
         path="/dashboard/social-media-controller"
         element={(
-          <RoleProtectedRoute allowedRoles={['SYSTEM_OWNER', 'SOCIAL_MEDIA_CONTROLLER']}>
+          <ProtectedAdminRoute allowedRoles={['SYSTEM_OWNER', 'ROOT_ADMIN', 'SOCIAL_MEDIA_CONTROLLER']}>
             <SocialMediaControllerDashboard />
-          </RoleProtectedRoute>
+          </ProtectedAdminRoute>
         )}
+      />
+
+      <Route
+        path="*"
+        element={<Navigate to={isAuthenticated ? '/admin' : '/'} replace />}
       />
     </Routes>
   );
@@ -236,8 +268,10 @@ export default function App() {
   return (
     <AppProvider>
       <Router>
-        <AppRoutes />
-        <AuthDebug />
+        <AppErrorBoundary>
+          <AppRoutes />
+          <AuthDebug />
+        </AppErrorBoundary>
       </Router>
     </AppProvider>
   );

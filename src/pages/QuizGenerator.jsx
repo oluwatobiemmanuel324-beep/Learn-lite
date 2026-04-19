@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { groupAPI } from '../services/api';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { getApiErrorMessage, groupAPI, quizAPI, userAPI } from '../services/api';
+import { useApp } from '../context/AppContext';
 
 const backgroundPresets = [
   'linear-gradient(135deg, #0f7b6c 0%, #0b141a 100%)',
@@ -12,6 +13,82 @@ const backgroundPresets = [
 ];
 
 const reactionOptions = ['👍', '❤️', '😂'];
+const DEFAULT_EXAM_DURATION_SECONDS = 15 * 60;
+
+function parseQuizQuestionsFromPayload(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+
+  const sources = [
+    payload.questions,
+    payload.quiz?.questions,
+    payload.data?.questions,
+    payload.data?.quiz?.questions,
+    payload.result?.questions,
+    payload.result?.quiz?.questions
+  ];
+
+  const rawQuestions = sources.find((candidate) => Array.isArray(candidate)) || [];
+
+  return rawQuestions
+    .map((item, index) => {
+      const stem = item?.question || item?.prompt || item?.text || `Question ${index + 1}`;
+      const choiceCandidates = [
+        item?.options,
+        item?.choices,
+        item?.answers,
+        item?.alternatives
+      ].find((candidate) => Array.isArray(candidate));
+
+      const normalizedChoices = Array.isArray(choiceCandidates)
+        ? choiceCandidates.map((choice, choiceIndex) => {
+            if (typeof choice === 'string') {
+              return { key: String.fromCharCode(65 + choiceIndex), text: choice };
+            }
+
+            if (choice && typeof choice === 'object') {
+              const key = String(choice.key || choice.label || String.fromCharCode(65 + choiceIndex));
+              const text = String(choice.text || choice.value || choice.option || `Option ${key}`);
+              return { key, text };
+            }
+
+            return { key: String.fromCharCode(65 + choiceIndex), text: String(choice || '') };
+          })
+        : [];
+
+      const rawCorrect = item?.correctAnswer ?? item?.answer ?? item?.correct_option;
+      const normalizedCorrect = rawCorrect == null ? null : String(rawCorrect).trim();
+
+      return {
+        id: item?.id || `q-${index + 1}`,
+        question: String(stem),
+        options: normalizedChoices,
+        correctAnswer: normalizedCorrect,
+        explanation: item?.explanation || ''
+      };
+    })
+    .filter((item) => item.question && item.options.length > 0);
+}
+
+function generateFallbackQuestionsFromNote(noteName, count = 8) {
+  const total = Math.max(5, Math.min(Number(count) || 8, 20));
+  return Array.from({ length: total }).map((_, idx) => {
+    const qNo = idx + 1;
+    const options = [
+      { key: 'A', text: `Core concept in ${noteName} (option A)` },
+      { key: 'B', text: `Core concept in ${noteName} (option B)` },
+      { key: 'C', text: `Core concept in ${noteName} (option C)` },
+      { key: 'D', text: `Core concept in ${noteName} (option D)` }
+    ];
+
+    return {
+      id: `fallback-${qNo}`,
+      question: `From ${noteName}, which option best answers question ${qNo}?`,
+      options,
+      correctAnswer: options[qNo % options.length].key,
+      explanation: 'Generated from local fallback template because parser payload was not available.'
+    };
+  });
+}
 
 function WorkspaceState({ title, message, actionLabel, onAction }) {
   return (
@@ -29,7 +106,9 @@ function WorkspaceState({ title, message, actionLabel, onAction }) {
 
 export default function QuizGenerator() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id: groupId } = useParams();
+  const { uploadedFile } = useApp();
   const fileInputRef = useRef(null);
   const bgImageInputRef = useRef(null);
 
@@ -45,6 +124,22 @@ export default function QuizGenerator() {
   const [workspaceMessages, setWorkspaceMessages] = useState([]);
   const [showGroupDetails, setShowGroupDetails] = useState(false);
   const [replyTarget, setReplyTarget] = useState(null);
+  const [generatedQuiz, setGeneratedQuiz] = useState(null);
+  const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
+  const [quizGenerationError, setQuizGenerationError] = useState('');
+  const [fuelBalance, setFuelBalance] = useState(0);
+  const [loadingFuel, setLoadingFuel] = useState(false);
+  const [publishingQuiz, setPublishingQuiz] = useState(false);
+  const [publishedQuizAt, setPublishedQuizAt] = useState(null);
+  const [examMode, setExamMode] = useState(false);
+  const [examTimeLeft, setExamTimeLeft] = useState(DEFAULT_EXAM_DURATION_SECONDS);
+  const [examAnswers, setExamAnswers] = useState({});
+  const [examSubmitted, setExamSubmitted] = useState(false);
+  const [examResult, setExamResult] = useState(null);
+  const [showExamOverview, setShowExamOverview] = useState(false);
+  const [proStudyMode, setProStudyMode] = useState('none');
+  const [examHistory, setExamHistory] = useState([]);
+  const [autoGeneratedOnce, setAutoGeneratedOnce] = useState(false);
 
   const normalizeBackgroundForCss = (value) => {
     if (!value) return null;
@@ -55,11 +150,39 @@ export default function QuizGenerator() {
     return trimmed;
   };
 
-  const currentUser = JSON.parse(localStorage.getItem('learn_lite_user') || '{}');
+  const currentUser = (() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem('learn_lite_user') || '{}');
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  })();
   const currentUsername = currentUser?.username || 'You';
+  const currentUserId = Number(localStorage.getItem('user_id') || currentUser?.id || 0);
+  const examHistoryKey = `learn_lite_exam_history_${currentUserId || 'anon'}`;
+  const isStandaloneMode = !groupId;
 
   useEffect(() => {
     if (!groupId) {
+      const fallbackId = Number(localStorage.getItem('user_id') || currentUser?.id || 0);
+      setGroup({
+        id: 'solo-room',
+        name: 'Personal Study Room',
+        joinCode: 'SOLO00',
+        createdById: fallbackId,
+        members: [
+          {
+            role: 'ADMIN',
+            user: {
+              id: fallbackId || 0,
+              username: currentUsername,
+              email: currentUser?.email || 'you@learnlite.local'
+            }
+          }
+        ]
+      });
+      setCurrentUserRole('ADMIN');
       setLoading(false);
       return;
     }
@@ -84,6 +207,66 @@ export default function QuizGenerator() {
 
     fetchGroup();
   }, [groupId]);
+
+  useEffect(() => {
+    if (uploadedFile && !attachedNote) {
+      setAttachedNote(uploadedFile);
+    }
+  }, [uploadedFile, attachedNote]);
+
+  useEffect(() => {
+    if (autoGeneratedOnce) return;
+    if (!location.state?.autoGenerate) return;
+    if (!attachedNote) return;
+
+    setAutoGeneratedOnce(true);
+    handleGenerateQuizShortcut();
+  }, [location.state, attachedNote, autoGeneratedOnce]);
+
+  const fetchFuelBalance = async () => {
+    setLoadingFuel(true);
+    try {
+      const result = await userAPI.getFuel();
+      const nextFuel = Number(result?.fuelBalance ?? result?.fuel ?? 0);
+      setFuelBalance(Number.isFinite(nextFuel) ? nextFuel : 0);
+    } catch (err) {
+      const message = getApiErrorMessage(err, 'Unable to refresh fuel balance right now.');
+      appendWorkspaceMessage({
+        tone: 'system',
+        title: 'Fuel status',
+        text: message
+      });
+    } finally {
+      setLoadingFuel(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchFuelBalance();
+  }, []);
+
+  useEffect(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(examHistoryKey) || '[]');
+      setExamHistory(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setExamHistory([]);
+    }
+  }, [examHistoryKey]);
+
+  useEffect(() => {
+    if (!examMode || examSubmitted) return;
+    if (examTimeLeft <= 0) {
+      handleSubmitExam(true);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setExamTimeLeft((current) => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [examMode, examSubmitted, examTimeLeft]);
 
   const appendWorkspaceMessage = (message) => {
     setWorkspaceMessages((current) => [
@@ -186,6 +369,10 @@ export default function QuizGenerator() {
   };
 
   const handleChangeJoinCode = async () => {
+    if (isStandaloneMode) {
+      return;
+    }
+
     if (!newJoinCode && !window.confirm('Generate a new random join code?')) return;
 
     try {
@@ -209,6 +396,11 @@ export default function QuizGenerator() {
 
   const handleSetBackground = async (backgroundValue) => {
     const normalizedBackground = normalizeBackgroundForCss(backgroundValue);
+
+    if (isStandaloneMode) {
+      setCustomBackground(normalizedBackground);
+      return;
+    }
 
     try {
       const result = await groupAPI.setCustomBackground(groupId, normalizedBackground);
@@ -283,11 +475,230 @@ export default function QuizGenerator() {
       return;
     }
 
+    setQuizGenerationError('');
+    setIsGeneratingQuiz(true);
+    setExamMode(false);
+    setExamSubmitted(false);
+    setExamResult(null);
+    setExamAnswers({});
+
+    (async () => {
+      try {
+        const response = await quizAPI.generateQuiz(attachedNote, {
+          questionCount: 10,
+          difficulty: 'mixed',
+          mode: 'exam-ready'
+        });
+
+        const parsedQuestions = parseQuizQuestionsFromPayload(response);
+        const effectiveQuestions = parsedQuestions.length
+          ? parsedQuestions
+          : generateFallbackQuestionsFromNote(attachedNote.name, 10);
+
+        const generated = {
+          id: response?.quizId || response?.id || `generated-${Date.now()}`,
+          source: attachedNote.name,
+          generatedAt: new Date().toISOString(),
+          questions: effectiveQuestions,
+          backendResponse: response
+        };
+
+        setGeneratedQuiz(generated);
+        appendWorkspaceMessage({
+          tone: 'system',
+          title: 'Quiz generated',
+          text: `Created ${effectiveQuestions.length} questions from ${attachedNote.name}. Choose Review, Exam Mode, or Publish to Class Group.`
+        });
+      } catch (err) {
+        const message = getApiErrorMessage(err, 'Quiz generation failed. Please try again.');
+        setQuizGenerationError(message);
+        appendWorkspaceMessage({
+          tone: 'system',
+          title: 'Quiz generation failed',
+          text: message
+        });
+      } finally {
+        setIsGeneratingQuiz(false);
+      }
+    })();
+  };
+
+  const handleStartExamMode = () => {
+    if (!generatedQuiz?.questions?.length) {
+      alert('Generate a quiz first.');
+      return;
+    }
+
+    setExamAnswers({});
+    setExamTimeLeft(DEFAULT_EXAM_DURATION_SECONDS);
+    setExamSubmitted(false);
+    setExamResult(null);
+    setExamMode(true);
     appendWorkspaceMessage({
       tone: 'system',
-      title: 'Generate quiz',
-      text: `Quiz generation has been staged for ${attachedNote.name}. Wire this action to the quiz backend next.`
+      title: 'Exam mode started',
+      text: 'Timer started. You have 15 minutes. Your exam auto-submits when time expires.'
     });
+  };
+
+  const handleSelectExamAnswer = (questionId, answerKey) => {
+    if (examSubmitted) return;
+    setExamAnswers((current) => ({ ...current, [questionId]: answerKey }));
+  };
+
+  const scoreQuizDetailed = () => {
+    const questions = generatedQuiz?.questions || [];
+    if (!questions.length) return { score: 0, total: 0, percent: 0, review: [], mistakes: [] };
+
+    let correct = 0;
+    const review = questions.map((question) => {
+      const selectedRaw = String(examAnswers[question.id] || '').trim().toUpperCase();
+      const expectedRaw = String(question.correctAnswer || '').trim().toUpperCase();
+
+      const selectedOption = question.options.find((option) => String(option.key || '').trim().toUpperCase() === selectedRaw) || null;
+      const expectedOption = question.options.find((option) => String(option.key || '').trim().toUpperCase() === expectedRaw)
+        || question.options.find((option) => String(option.text || '').trim().toUpperCase() === expectedRaw)
+        || null;
+
+      const isCorrect = Boolean(selectedOption && expectedOption && selectedOption.key === expectedOption.key);
+      if (isCorrect) correct += 1;
+
+      return {
+        id: question.id,
+        question: question.question,
+        selectedLabel: selectedOption ? `${selectedOption.key}. ${selectedOption.text}` : 'No answer selected',
+        correctLabel: expectedOption ? `${expectedOption.key}. ${expectedOption.text}` : 'Not available',
+        explanation: question.explanation || '',
+        isCorrect
+      };
+    });
+
+    const total = questions.length;
+    const percent = Math.round((correct / total) * 100);
+    const mistakes = review.filter((item) => !item.isCorrect);
+    return { score: correct, total, percent, review, mistakes };
+  };
+
+  const persistExamAttempt = (result, autoSubmitted) => {
+    const attempt = {
+      id: `attempt-${Date.now()}`,
+      quizId: generatedQuiz?.id || null,
+      quizSource: generatedQuiz?.source || 'Unknown source',
+      takenAt: new Date().toISOString(),
+      autoSubmitted,
+      score: result.score,
+      total: result.total,
+      percent: result.percent,
+      mistakes: result.mistakes,
+      review: result.review
+    };
+
+    const nextHistory = [attempt, ...examHistory].slice(0, 30);
+    setExamHistory(nextHistory);
+    localStorage.setItem(examHistoryKey, JSON.stringify(nextHistory));
+  };
+
+  const handleSubmitExam = (autoSubmitted = false) => {
+    if (!generatedQuiz?.questions?.length || examSubmitted) return;
+
+    const result = scoreQuizDetailed();
+    setExamSubmitted(true);
+    setExamResult(result);
+    setShowExamOverview(true);
+    setProStudyMode('none');
+    persistExamAttempt(result, autoSubmitted);
+
+    appendWorkspaceMessage({
+      tone: 'system',
+      title: autoSubmitted ? 'Exam auto-submitted' : 'Exam submitted',
+      text: `Score: ${result.score}/${result.total} (${result.percent}%). Mistakes saved for focused study.`
+    });
+  };
+
+  const handleRetakeExam = () => {
+    if (!generatedQuiz?.questions?.length) return;
+    setExamAnswers({});
+    setExamSubmitted(false);
+    setExamResult(null);
+    setShowExamOverview(false);
+    setProStudyMode('none');
+    setExamTimeLeft(DEFAULT_EXAM_DURATION_SECONDS);
+    setExamMode(true);
+  };
+
+  const buildProStudyPrompt = () => {
+    const mistakes = examResult?.mistakes || [];
+    if (!mistakes.length) {
+      return 'Create a focused remediation lesson based on my recent exam performance and include worked examples.';
+    }
+
+    const focusLines = mistakes.slice(0, 6).map((item, idx) => `${idx + 1}. ${item.question}`);
+    return `Create a concise remedial study lesson from these missed exam areas:\n${focusLines.join('\n')}\nExplain each mistake and include memory aids and practice drills.`;
+  };
+
+  const handleProStudyVideo = () => {
+    navigate('/generate-video', { state: { prefillPrompt: buildProStudyPrompt() } });
+  };
+
+  const handlePublishQuizToGroup = async () => {
+    if (isStandaloneMode) {
+      alert('Publishing to class group is available inside a class workspace. Create or join a class group first.');
+      return;
+    }
+
+    if (!generatedQuiz?.questions?.length) {
+      alert('Generate a quiz first.');
+      return;
+    }
+
+    if (fuelBalance < 1) {
+      alert('Insufficient fuel. Buy fuel to publish this quiz to your class group.');
+      return;
+    }
+
+    setPublishingQuiz(true);
+    try {
+      const payload = {
+        title: generatedQuiz.source ? `Quiz from ${generatedQuiz.source}` : 'Class Quiz',
+        quiz: {
+          sourceFileName: generatedQuiz.source,
+          questionCount: generatedQuiz.questions.length,
+          generatedAt: generatedQuiz.generatedAt,
+          questions: generatedQuiz.questions
+        }
+      };
+      const result = await groupAPI.publishQuiz(groupId, payload);
+      const serverFuel = Number(result?.fuelRemaining);
+      if (Number.isFinite(serverFuel)) {
+        setFuelBalance(serverFuel);
+      } else {
+        setFuelBalance((current) => Math.max(0, current - 1));
+      }
+
+      setPublishedQuizAt(new Date().toISOString());
+      appendWorkspaceMessage({
+        tone: 'system',
+        title: 'Quiz published to class group',
+        text: `Published ${generatedQuiz.questions.length} questions. Fuel remaining: ${Number.isFinite(serverFuel) ? serverFuel : Math.max(0, fuelBalance - 1)}.`
+      });
+    } catch (err) {
+      const message = getApiErrorMessage(err, 'Failed to publish quiz to class group.');
+      appendWorkspaceMessage({
+        tone: 'system',
+        title: 'Publish failed',
+        text: message
+      });
+      alert(message);
+    } finally {
+      setPublishingQuiz(false);
+    }
+  };
+
+  const formatExamTime = (seconds) => {
+    const safe = Math.max(0, Number(seconds) || 0);
+    const mins = Math.floor(safe / 60);
+    const secs = safe % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
   const handleGenerateVideoShortcut = () => {
@@ -378,7 +789,7 @@ export default function QuizGenerator() {
 
       <div className="workspace-layout workspace-layout--full-width">
         {/* Hidden sidebar, revealed as modal on demand */}
-        {showGroupDetails && (
+        {showGroupDetails && !isStandaloneMode && (
           <div className="workspace-modal-overlay" onClick={() => setShowGroupDetails(false)}>
             <div className="workspace-modal" onClick={(e) => e.stopPropagation()}>
               <div className="workspace-modal__header">
@@ -570,17 +981,26 @@ export default function QuizGenerator() {
             </button>
             <button
               className="workspace-chat-header__group-button"
-              onClick={() => setShowGroupDetails(true)}
+              onClick={() => {
+                if (!isStandaloneMode) {
+                  setShowGroupDetails(true);
+                }
+              }}
             >
               <div className="workspace-chat-avatar">{group.name.slice(0, 1).toUpperCase()}</div>
               <div>
                 <h2>{group.name}</h2>
-                <p>{isAdmin ? 'Admin controls enabled' : 'Member view'} • collaborative learning space</p>
+                <p>
+                  {isStandaloneMode
+                    ? 'Solo mode • exam-ready study workspace'
+                    : `${isAdmin ? 'Admin controls enabled' : 'Member view'} • collaborative learning space`}
+                </p>
               </div>
             </button>
 
             <div className="workspace-chat-header__meta">
               <span>{attachedNote ? `Attached: ${attachedNote.name}` : 'No note attached yet'}</span>
+              <span>Fuel: {loadingFuel ? '...' : fuelBalance}</span>
             </div>
           </header>
 
@@ -597,11 +1017,13 @@ export default function QuizGenerator() {
                 </p>
               </article>
 
-              <article className="workspace-message workspace-message--outgoing">
-                <span className="workspace-message__eyebrow">Group code</span>
-                <h3>{group.joinCode}</h3>
-                <p>Share this code with classmates who should join this workspace.</p>
-              </article>
+              {!isStandaloneMode && (
+                <article className="workspace-message workspace-message--outgoing">
+                  <span className="workspace-message__eyebrow">Group code</span>
+                  <h3>{group.joinCode}</h3>
+                  <p>Share this code with classmates who should join this workspace.</p>
+                </article>
+              )}
 
               {workspaceMessages.map((message) => (
                 <article
@@ -656,6 +1078,196 @@ export default function QuizGenerator() {
                   )}
                 </article>
               ))}
+
+              {generatedQuiz?.questions?.length > 0 && (
+                <article className="workspace-message workspace-message--wide workspace-message--incoming workspace-quiz-result-card">
+                  <span className="workspace-message__eyebrow">Quiz ready</span>
+                  <h3>{generatedQuiz.questions.length} questions from {generatedQuiz.source}</h3>
+                  <p>
+                    Generated at {new Date(generatedQuiz.generatedAt).toLocaleString()}.
+                    {' '}Use the actions below to review, switch to exam mode, or publish to your class group (costs 1 fuel).
+                  </p>
+
+                  {quizGenerationError && <p className="workspace-quiz-error">{quizGenerationError}</p>}
+
+                  <div className="workspace-quiz-actions">
+                    <button className="workspace-primary-button" onClick={handleStartExamMode}>
+                      Take In Exam Mode
+                    </button>
+                    {!isStandaloneMode && (
+                      <button
+                        className="workspace-inline-button"
+                        onClick={handlePublishQuizToGroup}
+                        disabled={publishingQuiz || fuelBalance < 1}
+                      >
+                        {publishingQuiz ? 'Publishing...' : 'Publish to Class Group (1 Fuel)'}
+                      </button>
+                    )}
+                  </div>
+
+                  {publishedQuizAt && (
+                    <div className="workspace-publish-badge">
+                      Published at {new Date(publishedQuizAt).toLocaleTimeString()}.
+                    </div>
+                  )}
+
+                  {examHistory.length > 0 && (
+                    <div className="workspace-exam-history-inline">
+                      Last exam: {examHistory[0]?.score}/{examHistory[0]?.total} ({examHistory[0]?.percent}%) • Attempts saved: {examHistory.length}
+                    </div>
+                  )}
+
+                  {!examMode && (
+                    <div className="workspace-quiz-review-list">
+                      {generatedQuiz.questions.slice(0, 5).map((question, idx) => (
+                        <div className="workspace-quiz-review-item" key={question.id}>
+                          <strong>Q{idx + 1}.</strong> {question.question}
+                        </div>
+                      ))}
+                      {generatedQuiz.questions.length > 5 && (
+                        <div className="workspace-quiz-review-item workspace-quiz-review-item--muted">
+                          +{generatedQuiz.questions.length - 5} more questions
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </article>
+              )}
+
+              {examMode && generatedQuiz?.questions?.length > 0 && (
+                <article className="workspace-message workspace-message--wide workspace-message--incoming workspace-exam-card">
+                  <div className="workspace-exam-header">
+                    <span className="workspace-message__eyebrow">Exam mode</span>
+                    <div className={`workspace-exam-timer${examTimeLeft <= 120 ? ' is-danger' : ''}`}>
+                      Time Left: {formatExamTime(examTimeLeft)}
+                    </div>
+                  </div>
+
+                  <h3>Timed CBT Session</h3>
+                  <p>Answer all questions before the timer expires. Unanswered questions score zero.</p>
+
+                  <div className="workspace-exam-questions">
+                    {generatedQuiz.questions.map((question, index) => (
+                      <div className="workspace-exam-question" key={question.id}>
+                        <div className="workspace-exam-question-title">{index + 1}. {question.question}</div>
+                        <div className="workspace-exam-options">
+                          {question.options.map((option) => {
+                            const checked = examAnswers[question.id] === option.key;
+                            return (
+                              <label className={`workspace-exam-option${checked ? ' is-selected' : ''}`} key={`${question.id}-${option.key}`}>
+                                <input
+                                  type="radio"
+                                  name={`question-${question.id}`}
+                                  value={option.key}
+                                  checked={checked}
+                                  onChange={() => handleSelectExamAnswer(question.id, option.key)}
+                                  disabled={examSubmitted}
+                                />
+                                <span>{option.key}. {option.text}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {!examSubmitted ? (
+                    <button className="workspace-primary-button" onClick={() => handleSubmitExam(false)}>
+                      Submit Exam
+                    </button>
+                  ) : (
+                    <>
+                      <div className="workspace-exam-result">
+                        Score: {examResult?.score}/{examResult?.total} ({examResult?.percent}%) • Mistakes: {examResult?.mistakes?.length || 0}
+                      </div>
+
+                      <div className="workspace-exam-post-actions">
+                        <button className="workspace-primary-button" onClick={handleRetakeExam}>
+                          Retake Exam
+                        </button>
+                        <button
+                          className="workspace-inline-button"
+                          onClick={() => setShowExamOverview((current) => !current)}
+                        >
+                          {showExamOverview ? 'Hide Exam Overview' : 'See Exam Overview'}
+                        </button>
+                        <button
+                          className="workspace-inline-button"
+                          onClick={() => setProStudyMode((current) => (current === 'none' ? 'choose' : 'none'))}
+                        >
+                          {proStudyMode === 'none' ? 'Pro Study' : 'Close Pro Study'}
+                        </button>
+                      </div>
+
+                      {showExamOverview && (
+                        <div className="workspace-exam-overview">
+                          <h4>Exam Overview</h4>
+                          {(examResult?.review || []).map((item, idx) => (
+                            <div
+                              key={`overview-${item.id}`}
+                              className={`workspace-exam-overview-item${item.isCorrect ? ' is-correct' : ' is-wrong'}`}
+                            >
+                              <div className="workspace-exam-overview-title">
+                                Q{idx + 1}. {item.question}
+                              </div>
+                              <div className="workspace-exam-overview-line">
+                                Your answer: {item.selectedLabel}
+                              </div>
+                              {!item.isCorrect && (
+                                <div className="workspace-exam-overview-line workspace-exam-overview-correct">
+                                  Correct answer: {item.correctLabel}
+                                </div>
+                              )}
+                              {!item.isCorrect && item.explanation && (
+                                <div className="workspace-exam-overview-line workspace-exam-overview-explain">
+                                  Why: {item.explanation}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {proStudyMode !== 'none' && (
+                        <div className="workspace-prostudy-wrap">
+                          {proStudyMode === 'choose' && (
+                            <div className="workspace-prostudy-choice">
+                              <p>Pick your focused remediation mode:</p>
+                              <div className="workspace-exam-post-actions">
+                                <button className="workspace-primary-button" onClick={() => setProStudyMode('text')}>
+                                  Text-based Study
+                                </button>
+                                <button className="workspace-inline-button" onClick={handleProStudyVideo}>
+                                  Video-based Study
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {proStudyMode === 'text' && (
+                            <div className="workspace-prostudy-text">
+                              <h4>Error-Focused Study Mode</h4>
+                              {(examResult?.mistakes || []).length === 0 ? (
+                                <p>You had no mistakes in this attempt. Great work. Use retake for speed practice.</p>
+                              ) : (
+                                (examResult?.mistakes || []).map((mistake, idx) => (
+                                  <div key={`mistake-${mistake.id}`} className="workspace-prostudy-item">
+                                    <div className="workspace-prostudy-item-title">Focus {idx + 1}: {mistake.question}</div>
+                                    <div className="workspace-prostudy-item-line">Missed with: {mistake.selectedLabel}</div>
+                                    <div className="workspace-prostudy-item-line">Correct: {mistake.correctLabel}</div>
+                                    {mistake.explanation ? <div className="workspace-prostudy-item-line">Tip: {mistake.explanation}</div> : null}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </article>
+              )}
             </div>
           </div>
 
@@ -698,6 +1310,7 @@ export default function QuizGenerator() {
                   onClick={handleGenerateQuizShortcut}
                   aria-label="Generate quiz"
                   title="Generate quiz"
+                  disabled={isGeneratingQuiz}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M9 7H15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -724,7 +1337,7 @@ export default function QuizGenerator() {
                 rows={1}
                 value={draftMessage}
                 onChange={(event) => setDraftMessage(event.target.value)}
-                placeholder="Type a class update, a study prompt, or a quick instruction..."
+                placeholder={isGeneratingQuiz ? 'Generating quiz from attached note...' : 'Type a class update, a study prompt, or a quick instruction...'}
               />
 
               <button
