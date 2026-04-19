@@ -562,6 +562,9 @@ export default function QuizGenerator() {
     } finally {
       setDraftMessage('');
       setReplyTarget(null);
+      if (!isStandaloneMode) {
+        await loadGroupMessages();
+      }
     }
   };
 

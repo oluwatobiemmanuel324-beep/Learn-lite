@@ -205,6 +205,18 @@ if (!fs.existsSync(homeMediaManifestPath)) {
 app.use('/home-media', express.static(homeMediaPath));
 console.log('🖼️ Serving homepage media from:', homeMediaPath);
 
+function normalizeHomeMediaItem(item) {
+  if (!item || typeof item !== 'object') return item;
+
+  const url = String(item.url || '').trim();
+  const relativeUrl = url.includes('/home-media/') ? url.slice(url.indexOf('/home-media/')) : url;
+
+  return {
+    ...item,
+    url: relativeUrl || url
+  };
+}
+
 function loadHomeMediaItems() {
   try {
     const raw = fs.readFileSync(homeMediaManifestPath, 'utf8');
@@ -212,7 +224,7 @@ function loadHomeMediaItems() {
     if (!Array.isArray(parsed?.items)) {
       return [];
     }
-    return parsed.items;
+    return parsed.items.map(normalizeHomeMediaItem);
   } catch (err) {
     console.warn('Unable to read homepage media manifest:', err.message);
     return [];
@@ -3663,9 +3675,29 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
       temperature: 0.55
     });
 
+    const responseText = String(aiResponse || '').trim();
+    await prisma.backup.create({
+      data: {
+        userId: requesterId,
+        messages: JSON.stringify({
+          type: 'GROUP_CHAT_MESSAGE',
+          groupId: Number(groupId),
+          senderId: 0,
+          messageId: `ai-${groupId}-${Date.now()}`,
+          tone: 'incoming',
+          title: '@learnlite',
+          text: responseText,
+          replyTo: null,
+          reactions: {},
+          createdAt: new Date().toISOString(),
+          generatedBy: 'gemini'
+        })
+      }
+    });
+
     res.json({
       success: true,
-      message: String(aiResponse || '').trim(),
+      message: responseText,
       provider: 'gemini',
       isAIMock: false
     });
@@ -4636,7 +4668,7 @@ app.post('/api/admin/ops/home-media', authMiddleware, requireRoles(['SYSTEM_OWNE
       type: mediaType,
       mimeType: String(mimeType || '').toLowerCase(),
       fileName: savedFileName,
-      url: `${PUBLIC_URL}/home-media/${savedFileName}`,
+      url: `/home-media/${savedFileName}`,
       uploadedAt: new Date().toISOString(),
       uploadedBy: req.user?.email || `user-${req.user?.userId || 'unknown'}`
     };
