@@ -119,6 +119,7 @@ const Header = () => {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useApp();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [hasSession, setHasSession] = useState(() => Boolean(localStorage.getItem('learn_lite_token')));
 
   useEffect(() => {
     const onResize = () => {
@@ -126,8 +127,20 @@ const Header = () => {
         setMobileMenuOpen(false);
       }
     };
+
+    const syncSession = () => {
+      setHasSession(Boolean(localStorage.getItem('learn_lite_token')));
+    };
+
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    window.addEventListener('storage', syncSession);
+    window.addEventListener('learnlite-auth-changed', syncSession);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('storage', syncSession);
+      window.removeEventListener('learnlite-auth-changed', syncSession);
+    };
   }, []);
 
   const handleGoBack = () => {
@@ -136,6 +149,16 @@ const Header = () => {
       return;
     }
     navigate('/');
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('learn_lite_token');
+    localStorage.removeItem('learn_lite_user');
+    localStorage.removeItem('user_id');
+    localStorage.removeItem('user_role');
+    window.dispatchEvent(new Event('learnlite-auth-changed'));
+    setMobileMenuOpen(false);
+    navigate('/login');
   };
 
   return (
@@ -172,6 +195,13 @@ const Header = () => {
         <a href="#study-modes">Study Modes</a>
         <a href="#community-shares">Community Shares</a>
         <Link to="/generate-video">Generate Video</Link>
+        {!hasSession ? <Link to="/signup">Sign Up</Link> : null}
+        {!hasSession ? <Link to="/login">Login</Link> : null}
+        {hasSession ? (
+          <button type="button" className="nav-auth-btn" onClick={handleLogout}>
+            Logout
+          </button>
+        ) : null}
         <div
           className="theme-toggle"
           id="themeSwitch"

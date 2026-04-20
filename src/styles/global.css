@@ -176,6 +176,22 @@ nav a:hover {
   color: var(--text);
 }
 
+.nav-auth-btn {
+  color: var(--muted);
+  font-weight: 700;
+  padding: 6px 8px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 13px;
+  background: transparent;
+  border: 0;
+}
+
+.nav-auth-btn:hover {
+  background: var(--glass);
+  color: var(--text);
+}
+
 /* ========================================
    THEME TOGGLE
    ======================================== */
@@ -1984,6 +2000,14 @@ button.course-level {
     border-radius: 8px;
     white-space: nowrap;
     font-weight: 700;
+  }
+
+  .main-nav .nav-auth-btn {
+    text-align: left;
+    width: 100%;
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 8px;
   }
 
   .main-nav .theme-toggle {
