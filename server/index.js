@@ -194,16 +194,10 @@ console.log('📹 Serving videos from:', videosPath);
 
 const homeMediaPath = path.join(__dirname, '..', 'public', 'home-media');
 const homeMediaManifestPath = path.join(homeMediaPath, 'manifest.json');
-const homeMediaTrashPath = path.join(__dirname, 'home-media-trash');
 
 if (!fs.existsSync(homeMediaPath)) {
   fs.mkdirSync(homeMediaPath, { recursive: true });
   console.log('🖼️ Created homepage media directory:', homeMediaPath);
-}
-
-if (!fs.existsSync(homeMediaTrashPath)) {
-  fs.mkdirSync(homeMediaTrashPath, { recursive: true });
-  console.log('🗑️ Created homepage media trash directory:', homeMediaTrashPath);
 }
 
 if (!fs.existsSync(homeMediaManifestPath)) {
@@ -4767,11 +4761,8 @@ app.delete('/api/admin/ops/home-media/:id', authMiddleware, requireRoles(['SYSTE
 
     const safeFileName = sanitizeUploadFileName(targetItem.fileName || '');
     const filePath = safeFileName ? path.join(homeMediaPath, safeFileName) : null;
-    const trashFileName = `${mediaId}__${safeFileName}`;
-    const trashFilePath = safeFileName ? path.join(homeMediaTrashPath, trashFileName) : null;
 
     if (filePath && fs.existsSync(filePath)) {
-      fs.copyFileSync(filePath, trashFilePath);
       fs.unlinkSync(filePath);
     }
 
@@ -4799,63 +4790,10 @@ app.delete('/api/admin/ops/home-media/:id', authMiddleware, requireRoles(['SYSTE
 });
 
 app.post('/api/admin/ops/home-media/:id/restore', authMiddleware, requireRoles(['SYSTEM_OWNER', 'OPS_MODERATOR']), async (req, res) => {
-  try {
-    const mediaId = String(req.params.id || '').trim();
-    const item = req.body?.item;
-
-    if (!mediaId || !item || typeof item !== 'object') {
-      return res.status(400).json({ success: false, error: 'Media id and item payload are required.' });
-    }
-
-    const safeFileName = sanitizeUploadFileName(item.fileName || '');
-    if (!safeFileName) {
-      return res.status(400).json({ success: false, error: 'Invalid file name.' });
-    }
-
-    const trashFileName = `${mediaId}__${safeFileName}`;
-    const trashFilePath = path.join(homeMediaTrashPath, trashFileName);
-    const restorePath = path.join(homeMediaPath, safeFileName);
-
-    if (!fs.existsSync(trashFilePath)) {
-      return res.status(404).json({ success: false, error: 'Deleted media backup not found.' });
-    }
-
-    fs.copyFileSync(trashFilePath, restorePath);
-    fs.unlinkSync(trashFilePath);
-
-    const existingItems = loadHomeMediaItems();
-    const restoredItem = {
-      id: item.id || mediaId,
-      title: String(item.title || 'Homepage media').trim(),
-      type: item.type || inferMediaTypeFromMime(item.mimeType),
-      mimeType: String(item.mimeType || '').toLowerCase(),
-      fileName: safeFileName,
-      url: `/home-media/${safeFileName}`,
-      uploadedAt: item.uploadedAt || new Date().toISOString(),
-      uploadedBy: item.uploadedBy || req.user?.email || `user-${req.user?.userId || 'unknown'}`
-    };
-
-    const updatedItems = [restoredItem, ...existingItems.filter((entry) => String(entry?.id || '') !== restoredItem.id)].slice(0, 30);
-    saveHomeMediaItems(updatedItems);
-
-    await logStaffActivity({
-      actorId: req.user.userId,
-      actorRole: req.user.role,
-      action: 'OPS_RESTORE_HOMEPAGE_MEDIA',
-      target: restoredItem.fileName,
-      details: `${String(restoredItem.type || 'media').toUpperCase()} restored to homepage display`
-    });
-
-    return res.json({
-      success: true,
-      message: 'Homepage media restored successfully.',
-      item: restoredItem,
-      items: updatedItems
-    });
-  } catch (err) {
-    console.error('Ops homepage media restore error:', err);
-    return res.status(500).json({ success: false, error: 'Server error' });
-  }
+  return res.status(410).json({
+    success: false,
+    error: 'Restore is no longer supported. Media removal is permanent.'
+  });
 });
 
 app.get('/api/admin/socialmedia/high-score-kit', authMiddleware, requireRoles(['SYSTEM_OWNER', 'SOCIAL_MEDIA_CONTROLLER']), async (req, res) => {

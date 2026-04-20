@@ -26,7 +26,6 @@ export default function OpsModeratorDashboard() {
   const [mediaItems, setMediaItems] = useState([]);
   const [mediaBusy, setMediaBusy] = useState(false);
   const [mediaRemovingId, setMediaRemovingId] = useState(null);
-  const [removedMediaToast, setRemovedMediaToast] = useState(null);
   const [mediaMessage, setMediaMessage] = useState({ type: '', text: '' });
   const [visibleMediaCount, setVisibleMediaCount] = useState(6);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1280));
@@ -74,12 +73,6 @@ export default function OpsModeratorDashboard() {
     }, 4500);
     return () => clearTimeout(timeoutId);
   }, [mediaBusy, mediaMessage]);
-
-  useEffect(() => {
-    if (!removedMediaToast) return undefined;
-    const timeoutId = setTimeout(() => setRemovedMediaToast(null), 7000);
-    return () => clearTimeout(timeoutId);
-  }, [removedMediaToast]);
 
   const handleUploadHomeMedia = async (e) => {
     e.preventDefault();
@@ -138,28 +131,11 @@ export default function OpsModeratorDashboard() {
       setMediaRemovingId(mediaId);
       const result = await adminAPI.removeHomeMedia(mediaId);
       setMediaItems(Array.isArray(result?.items) ? result.items : mediaItems.filter((media) => media.id !== mediaId));
-      setMediaMessage({ type: 'success', text: result?.message || 'Media removed successfully.' });
-      setRemovedMediaToast({ mediaId, item });
+      setMediaMessage({ type: 'success', text: result?.message || 'Media removed permanently.' });
     } catch (err) {
       setMediaMessage({ type: 'error', text: getApiErrorMessage(err, 'Failed to remove homepage media.') });
     } finally {
       setMediaRemovingId(null);
-    }
-  };
-
-  const handleUndoRemoveHomeMedia = async () => {
-    if (!removedMediaToast?.mediaId || !removedMediaToast?.item) return;
-
-    try {
-      setMediaBusy(true);
-      const result = await adminAPI.restoreHomeMedia(removedMediaToast.mediaId, removedMediaToast.item);
-      setMediaItems(Array.isArray(result?.items) ? result.items : mediaItems);
-      setMediaMessage({ type: 'success', text: result?.message || 'Media restored successfully.' });
-      setRemovedMediaToast(null);
-    } catch (err) {
-      setMediaMessage({ type: 'error', text: getApiErrorMessage(err, 'Failed to restore homepage media.') });
-    } finally {
-      setMediaBusy(false);
     }
   };
 
@@ -415,19 +391,6 @@ export default function OpsModeratorDashboard() {
                 : 'border-sky-500/40 bg-sky-500/10 text-sky-200'
             }`}>
               {mediaMessage.text}
-            </div>
-          ) : null}
-
-          {removedMediaToast ? (
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
-              <span>Removed {removedMediaToast.item?.title || 'homepage media'}.</span>
-              <button
-                type="button"
-                onClick={handleUndoRemoveHomeMedia}
-                className="dasher-btn-primary text-xs"
-              >
-                Undo
-              </button>
             </div>
           ) : null}
 
