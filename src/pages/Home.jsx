@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Facebook, Instagram, MessageCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Facebook, Instagram, Menu, MessageCircle, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { getApiErrorMessage, groupAPI, publicAPI } from '../services/api';
 
@@ -69,6 +69,17 @@ function sanitizeHTML(html) {
 const Header = () => {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useApp();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth > 640) {
+        setMobileMenuOpen(false);
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   const handleGoBack = () => {
     if (window.history.length > 1) {
@@ -95,7 +106,18 @@ const Header = () => {
           </div>
         </div>
       </div>
-      <nav>
+
+      <button
+        type="button"
+        className="nav-toggle"
+        aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+        aria-expanded={mobileMenuOpen}
+        onClick={() => setMobileMenuOpen((open) => !open)}
+      >
+        {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
+      </button>
+
+      <nav className={`main-nav ${mobileMenuOpen ? 'is-open' : ''}`}>
         <a href="#how">How it works</a>
         <a href="#features">Features</a>
         <Link to="/generate-video">Generate Video</Link>
@@ -255,11 +277,17 @@ const Slideshow = ({ mediaItems = [], onSlideChange }) => {
 // FILE UPLOAD COMPONENT
 // ========================================
 
-const FileUpload = ({ onFileChange, uploadedFile, onGenerate }) => {
+const FileUpload = ({ onFileChange, uploadedFile, onGenerate, openPickerSignal = 0 }) => {
   const [preview, setPreview] = useState(null);
   const [qCount, setQCount] = useState(10);
   const fileInputRef = useRef(null);
   const [generating, setGenerating] = useState(false);
+
+  useEffect(() => {
+    if (openPickerSignal > 0) {
+      fileInputRef.current?.click();
+    }
+  }, [openPickerSignal]);
 
   const handleFile = (file) => {
     if (!file) return;
@@ -320,10 +348,10 @@ const FileUpload = ({ onFileChange, uploadedFile, onGenerate }) => {
   };
 
   return (
-    <aside className="hero-card quick-start-card">
+    <aside className="hero-card quick-start-card action-uploader">
       <div className="quick-start-header">
-        <span className="kicker">AI • Study Smarter</span>
-        <h3 style={{ margin: '8px 0 0 0' }}>Upload notes and generate a quiz in seconds</h3>
+        <span className="kicker">Primary Action Area</span>
+        <h3 style={{ margin: '8px 0 0 0' }}>Drag & drop your notes to get instant quiz output</h3>
       </div>
       <div className="quick-start-body">
         <div
@@ -431,13 +459,13 @@ const Modal = ({ isOpen, onClose, children }) => {
 
 const Hero = ({ uploadedFile, onFileChange }) => {
   const navigate = useNavigate();
-  const [slideText, setSlideText] = useState('');
   const [modalType, setModalType] = useState(null);
   const [groupName, setGroupName] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [quickAccessLoading, setQuickAccessLoading] = useState(false);
   const [homeMediaItems, setHomeMediaItems] = useState([]);
+  const [openPickerSignal, setOpenPickerSignal] = useState(0);
 
   useEffect(() => {
     const loadHomeMedia = async () => {
@@ -554,84 +582,109 @@ const Hero = ({ uploadedFile, onFileChange }) => {
   };
 
   const handleExamples = () => {
-    alert('Examples feature would cycle through slides');
+    const section = document.getElementById('explore-courses');
+    if (section) {
+      section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   };
 
   const handleGenerateFromHome = async () => {
     navigate('/generate-quiz', { state: { autoGenerate: true } });
   };
 
+  const handlePrimaryUploadCTA = () => {
+    setOpenPickerSignal((prev) => prev + 1);
+  };
+
   return (
     <>
       <section className="hero-wrap" aria-label="Hero area">
         <div className="hero-shell">
-          <div className="hero-main-column">
-            <div className="hero-card hero-lead-card">
-              <span className="kicker">Learn Lite • AI-Powered Study Companion</span>
-              <h2 id="hero-heading">Learn Lite: Your AI-Powered Study Companion - Turn Notes into Success.</h2>
+          <div className="hero-main-column utility-hero-column">
+            <div className="hero-card hero-lead-card utility-hero-card">
+              <span className="kicker">Learn Lite • Utility-First Workspace</span>
+              <h2 id="hero-heading">Upload your notes. Generate smart quiz practice in seconds.</h2>
               <p className="hero-lead-copy">
-                Unlock new levels of understanding with instant quizzes and smart visualizations.
+                Skip browsing and go straight to value. Drop your file, extract key concepts, and start practicing immediately.
               </p>
-              <div className="hero-slide-caption" aria-live="polite">
-                {slideText && <span className="pill hero-caption-pill">{slideText}</span>}
+
+              <div className="hero-primary-actions">
+                <button type="button" className="btn" onClick={handlePrimaryUploadCTA}>
+                  Upload Notes
+                </button>
+                <button type="button" className="secondary" onClick={handleExamples}>
+                  Explore Courses
+                </button>
               </div>
-              <p className="hero-admin-note">
-                The slideshow is controlled by the assigned admin through the homepage media manager.
-              </p>
-            </div>
 
-            <Slideshow mediaItems={homeMediaItems} onSlideChange={setSlideText} />
+              <div className="hero-action-area" role="region" aria-label="Drag and drop upload action">
+                <FileUpload
+                  uploadedFile={uploadedFile}
+                  onFileChange={onFileChange}
+                  onGenerate={handleGenerateFromHome}
+                  openPickerSignal={openPickerSignal}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <section id="explore-courses" className="below-fold-shell" aria-label="Explore courses and media">
+          <div className="below-fold-heading">
+            <span className="kicker">Explore After Action</span>
+            <h3>Course discovery and media showcase</h3>
+            <p className="hero-summary-copy">
+              Your upload workflow comes first. Browse curated homepage media and extra learning tools after starting your quiz flow.
+            </p>
           </div>
 
-          <div className="hero-side-column" role="region" aria-label="Quick start">
-            <FileUpload uploadedFile={uploadedFile} onFileChange={onFileChange} onGenerate={handleGenerateFromHome} />
+          <div className="below-fold-grid">
+            <Slideshow mediaItems={homeMediaItems} />
+
+            <div className="hero-summary-grid">
+              <article className="hero-card hero-summary-card">
+                <div className="kicker">Features</div>
+                <h3>Visuals, summaries, and exam-ready quizzes.</h3>
+                <p className="hero-summary-copy">
+                  Learn Lite turns uploaded notes into visual explanations, concise summaries, and practical question sets.
+                </p>
+                <div className="tag-row">
+                  {['Quiz generation', 'AI summaries', 'Fast revision'].map((tag) => (
+                    <span key={tag} className="tag-pill">{tag}</span>
+                  ))}
+                </div>
+              </article>
+
+              <article className="hero-card hero-summary-card">
+                <div className="kicker">Secure Top-Up</div>
+                <h3>Paystack-powered fuel for uninterrupted study sessions.</h3>
+                <p className="hero-summary-copy">
+                  Add Fuel safely and keep your learning workflow running when you need more AI-powered processing.
+                </p>
+                <div className="tag-row">
+                  {['Secure payments', 'Fuel credits', 'Fast checkout'].map((tag) => (
+                    <span key={tag} className="tag-pill tag-pill--accent">{tag}</span>
+                  ))}
+                </div>
+              </article>
+            </div>
           </div>
-        </div>
 
-        <div className="hero-summary-grid">
-          <article className="hero-card hero-summary-card">
-            <div className="kicker">Features</div>
-            <h3>Educational videos, visualizations, summaries, and quizzes.</h3>
-            <p className="hero-summary-copy">
-              Learn Lite turns uploaded notes into visual explanations, concise summaries, and exam-ready question sets.
-              Fuel credits keep the AI processing simple and transparent.
-            </p>
-            <div className="tag-row">
-              {['AI video visualizations', 'Summaries and quizzes', 'Fuel credits'].map((tag) => (
-                <span key={tag} className="tag-pill">{tag}</span>
-              ))}
-            </div>
-          </article>
-
-          <article className="hero-card hero-summary-card">
-            <div className="kicker">Secure Top-Up</div>
-            <h3>Paystack-powered fuel top-ups for reliable study sessions.</h3>
-            <p className="hero-summary-copy">
-              Add Fuel safely with Paystack, keep your learning flow uninterrupted, and return to quizzes whenever you
-              need a refresher.
-            </p>
-            <div className="tag-row">
-              {['Secure Paystack top-ups', 'Fuel credits', 'Fast payment flow'].map((tag) => (
-                <span key={tag} className="tag-pill tag-pill--accent">{tag}</span>
-              ))}
-            </div>
-          </article>
-        </div>
-
-        <div className="hero-actions-row">
-          <button className="btn" id="createGroupBtn" onClick={handleCreateGroup}>
-            Create Class Group
-          </button>
-          <button className="secondary" id="joinGroupBtn" onClick={handleJoinGroup}>
-            Join Class Group
-          </button>
-          <button className="secondary" id="myGroupBtn" onClick={handleQuickAccessGroup} disabled={quickAccessLoading}>
-            {quickAccessLoading ? 'Opening...' : 'Go to My Group'}
-          </button>
-          <button className="secondary" id="examplesBtn" onClick={handleExamples}>
-            Explore Examples
-          </button>
-        </div>
+          <div className="hero-actions-row">
+            <button className="btn" id="createGroupBtn" onClick={handleCreateGroup}>
+              Create Class Group
+            </button>
+            <button className="secondary" id="joinGroupBtn" onClick={handleJoinGroup}>
+              Join Class Group
+            </button>
+            <button className="secondary" id="myGroupBtn" onClick={handleQuickAccessGroup} disabled={quickAccessLoading}>
+              {quickAccessLoading ? 'Opening...' : 'Go to My Group'}
+            </button>
+            <button className="secondary" id="examplesBtn" onClick={handleExamples}>
+              See Showcase
+            </button>
+          </div>
+        </section>
       </section>
 
       <Modal isOpen={modalType === 'create'} onClose={() => setModalType(null)}>
