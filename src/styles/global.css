@@ -2386,6 +2386,217 @@ textarea {
 }
 
 /* ========================================
+   SOLO STUDY PAGE
+   ======================================== */
+
+.solo-study-page {
+  min-height: 100vh;
+  background: radial-gradient(circle at 16% -8%, rgba(26, 178, 255, 0.2), transparent 40%),
+    radial-gradient(circle at 88% 0%, rgba(11, 97, 255, 0.18), transparent 42%),
+    #070f17;
+  color: var(--text);
+  padding: 28px 16px;
+}
+
+.solo-study-shell {
+  max-width: 980px;
+  margin: 0 auto;
+  display: grid;
+  gap: 16px;
+}
+
+.solo-study-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(126, 196, 255, 0.2);
+  background: linear-gradient(145deg, rgba(8, 20, 34, 0.95), rgba(8, 17, 29, 0.92));
+}
+
+.solo-study-eyebrow {
+  margin: 0 0 6px 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #93ccff;
+  font-weight: 700;
+}
+
+.solo-study-header h1 {
+  margin: 0 0 8px 0;
+  font-size: clamp(1.7rem, 3vw, 2.4rem);
+}
+
+.solo-study-header p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+  max-width: 68ch;
+}
+
+.solo-study-back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(129, 204, 255, 0.28);
+  color: #bde9ff;
+  white-space: nowrap;
+}
+
+.solo-study-upload-card,
+.solo-study-insight-card {
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(126, 196, 255, 0.2);
+  background: rgba(10, 20, 33, 0.94);
+  display: grid;
+  gap: 12px;
+}
+
+.solo-study-upload-card h2,
+.solo-study-insight-card h3 {
+  margin: 0;
+}
+
+.solo-study-insight-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.solo-study-dropzone {
+  border-radius: 14px;
+  border: 1.5px dashed rgba(94, 198, 255, 0.62);
+  background: radial-gradient(circle at 50% 0%, rgba(24, 203, 255, 0.22), rgba(11, 20, 34, 0.6));
+  min-height: 170px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 16px;
+}
+
+.solo-study-dropzone-title {
+  margin: 0;
+  font-weight: 800;
+}
+
+.solo-study-dropzone-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.solo-study-file-chip {
+  display: inline-flex;
+  padding: 7px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(137, 221, 255, 0.36);
+  background: rgba(11, 97, 255, 0.13);
+  color: #cdf0ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.solo-study-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.solo-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(3, 8, 14, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+}
+
+.solo-dialog-card {
+  width: min(720px, 100%);
+  padding: 20px;
+  border-radius: 16px;
+  border: 1px solid rgba(126, 196, 255, 0.24);
+  background: linear-gradient(145deg, rgba(8, 20, 34, 0.98), rgba(8, 17, 30, 0.96));
+  display: grid;
+  gap: 12px;
+}
+
+.solo-dialog-card h3,
+.solo-dialog-card p {
+  margin: 0;
+}
+
+.solo-dialog-card p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.solo-option-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.solo-option-btn {
+  padding: 14px;
+  border-radius: 12px;
+  text-align: left;
+  border: 1px solid rgba(126, 196, 255, 0.2);
+  background: rgba(9, 22, 37, 0.92);
+  color: #dcefff;
+  display: grid;
+  gap: 6px;
+}
+
+.solo-option-btn span {
+  color: var(--muted);
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+.solo-dialog-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.solo-dialog-spinner {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 3px solid rgba(132, 210, 255, 0.25);
+  border-top-color: #24ccff;
+  animation: solo-spin 0.9s linear infinite;
+}
+
+@keyframes solo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 860px) {
+  .solo-option-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .solo-study-header {
+    flex-direction: column;
+  }
+}
+
+/* ========================================
    GROUP WORKSPACE (WHATSAPP-INSPIRED)
    ======================================== */
 

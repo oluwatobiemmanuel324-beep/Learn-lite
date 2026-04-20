@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import QuizGenerator from './pages/QuizGenerator';
 import VideoGenerator from './pages/VideoGenerator';
+import SoloStudyPage from './pages/SoloStudyPage';
 import AdminDashboard from './pages/AdminDashboard';
 import RootAdminDashboard from './pages/RootAdminDashboard';
 import SystemOwnerDashboard from './pages/SystemOwnerDashboard';
@@ -182,6 +183,7 @@ function AppRoutes() {
       />
       <Route path="/generate-quiz" element={<QuizGenerator />} />
       <Route path="/generate-quiz/:id" element={<QuizGenerator />} />
+      <Route path="/solo-study" element={<SoloStudyPage />} />
       <Route path="/generate-video" element={<VideoGenerator />} />
       <Route path="/admin" element={<AdminRouteRedirect />} />
       <Route path="/admin/unauthorized" element={<UnauthorizedPage />} />

@@ -611,6 +611,22 @@ export default function QuizGenerator() {
         };
 
         setGeneratedQuiz(generated);
+
+        if (location.state?.startInExamMode) {
+          setExamAnswers({});
+          setExamTimeLeft(DEFAULT_EXAM_DURATION_SECONDS);
+          setExamSubmitted(false);
+          setExamResult(null);
+          setShowExamOverview(false);
+          setProStudyMode('none');
+          setExamMode(true);
+          appendWorkspaceMessage({
+            tone: 'system',
+            title: 'CBT exam started',
+            text: `Questions loaded from ${attachedNote.name}. Timer started for 15 minutes.`
+          });
+        }
+
         appendWorkspaceMessage({
           tone: 'system',
           title: 'Quiz generated',

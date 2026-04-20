@@ -119,7 +119,6 @@ const Header = () => {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useApp();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [hasSession, setHasSession] = useState(() => Boolean(localStorage.getItem('learn_lite_token')));
 
   useEffect(() => {
     const onResize = () => {
@@ -128,18 +127,10 @@ const Header = () => {
       }
     };
 
-    const syncSession = () => {
-      setHasSession(Boolean(localStorage.getItem('learn_lite_token')));
-    };
-
     window.addEventListener('resize', onResize);
-    window.addEventListener('storage', syncSession);
-    window.addEventListener('learnlite-auth-changed', syncSession);
 
     return () => {
       window.removeEventListener('resize', onResize);
-      window.removeEventListener('storage', syncSession);
-      window.removeEventListener('learnlite-auth-changed', syncSession);
     };
   }, []);
 
@@ -194,14 +185,13 @@ const Header = () => {
         <a href="#categories">Categories</a>
         <a href="#study-modes">Study Modes</a>
         <a href="#community-shares">Community Shares</a>
+        <Link to="/solo-study">Solo Drills</Link>
         <Link to="/generate-video">Generate Video</Link>
-        {!hasSession ? <Link to="/signup">Sign Up</Link> : null}
-        {!hasSession ? <Link to="/login">Login</Link> : null}
-        {hasSession ? (
-          <button type="button" className="nav-auth-btn" onClick={handleLogout}>
-            Logout
-          </button>
-        ) : null}
+        <Link to="/signup">Sign Up</Link>
+        <Link to="/login">Login</Link>
+        <button type="button" className="nav-auth-btn" onClick={handleLogout}>
+          Logout
+        </button>
         <div
           className="theme-toggle"
           id="themeSwitch"
