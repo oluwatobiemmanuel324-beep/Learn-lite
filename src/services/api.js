@@ -271,7 +271,9 @@ export const userAPI = {
 };
 
 export const publicAPI = {
-  getHomeMedia: () => client.get('/api/home-media')
+  getHomeMedia: () => client.get('/api/home-media'),
+  getCommunityStudyShares: (params = {}) => client.get('/api/community/study-shares', { params }),
+  shareCommunityStudyResource: (payload) => client.post('/api/community/study-shares', payload)
 };
 
 export const chatAPI = {

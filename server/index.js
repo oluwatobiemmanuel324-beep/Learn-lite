@@ -194,6 +194,7 @@ console.log('📹 Serving videos from:', videosPath);
 
 const homeMediaPath = path.join(__dirname, '..', 'public', 'home-media');
 const homeMediaManifestPath = path.join(homeMediaPath, 'manifest.json');
+const communitySharesPath = path.join(__dirname, '..', 'public', 'community-study-shares.json');
 
 if (!fs.existsSync(homeMediaPath)) {
   fs.mkdirSync(homeMediaPath, { recursive: true });
@@ -202,6 +203,10 @@ if (!fs.existsSync(homeMediaPath)) {
 
 if (!fs.existsSync(homeMediaManifestPath)) {
   fs.writeFileSync(homeMediaManifestPath, JSON.stringify({ items: [] }, null, 2), 'utf8');
+}
+
+if (!fs.existsSync(communitySharesPath)) {
+  fs.writeFileSync(communitySharesPath, JSON.stringify({ items: [] }, null, 2), 'utf8');
 }
 
 app.use('/home-media', express.static(homeMediaPath));
@@ -250,6 +255,48 @@ function inferMediaTypeFromMime(mimeType = '') {
   if (normalized.startsWith('image/')) return 'image';
   if (normalized.startsWith('video/')) return 'video';
   return 'unknown';
+}
+
+function normalizeCommunityShareItem(item) {
+  if (!item || typeof item !== 'object') return null;
+
+  const category = String(item.category || 'General').trim() || 'General';
+  const title = String(item.title || '').trim();
+  const description = String(item.description || '').trim();
+  if (!title || !description) return null;
+
+  return {
+    id: String(item.id || `share-${Date.now()}-${Math.round(Math.random() * 9999)}`),
+    title: title.slice(0, 120),
+    category: category.slice(0, 60),
+    description: description.slice(0, 700),
+    resourceType: String(item.resourceType || 'quiz').trim().toLowerCase().slice(0, 40),
+    sharedBy: String(item.sharedBy || 'learnlite-user').trim().slice(0, 120),
+    sharedByUserId: Number.isFinite(Number(item.sharedByUserId)) ? Number(item.sharedByUserId) : null,
+    groupId: Number.isFinite(Number(item.groupId)) ? Number(item.groupId) : null,
+    quizId: String(item.quizId || '').trim().slice(0, 120),
+    isFree: true,
+    createdAt: item.createdAt || new Date().toISOString()
+  };
+}
+
+function loadCommunityShares() {
+  try {
+    const raw = fs.readFileSync(communitySharesPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.items)) return [];
+    return parsed.items
+      .map(normalizeCommunityShareItem)
+      .filter(Boolean)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (err) {
+    console.warn('Unable to read community study shares:', err.message);
+    return [];
+  }
+}
+
+function saveCommunityShares(items) {
+  fs.writeFileSync(communitySharesPath, JSON.stringify({ items }, null, 2), 'utf8');
 }
 
 // ========================================
@@ -1163,6 +1210,77 @@ app.get('/api/home-media', (req, res) => {
     .slice(0, 24);
 
   return res.json({ success: true, items });
+});
+
+app.get('/api/community/study-shares', (req, res) => {
+  const category = String(req.query?.category || '').trim().toLowerCase();
+  const search = String(req.query?.search || '').trim().toLowerCase();
+  const limit = Math.max(1, Math.min(100, Number(req.query?.limit || 60)));
+
+  let items = loadCommunityShares();
+
+  if (category) {
+    items = items.filter((item) => String(item.category || '').toLowerCase() === category);
+  }
+
+  if (search) {
+    items = items.filter((item) => {
+      const blob = `${item.title} ${item.description} ${item.category}`.toLowerCase();
+      return blob.includes(search);
+    });
+  }
+
+  return res.json({ success: true, items: items.slice(0, limit) });
+});
+
+app.post('/api/community/study-shares', authMiddleware, async (req, res) => {
+  try {
+    const title = String(req.body?.title || '').trim();
+    const category = String(req.body?.category || '').trim();
+    const description = String(req.body?.description || '').trim();
+    const resourceType = String(req.body?.resourceType || 'quiz').trim().toLowerCase();
+    const quizId = String(req.body?.quizId || '').trim();
+    const groupId = Number(req.body?.groupId);
+
+    if (!title || !category || !description) {
+      return res.status(400).json({ success: false, error: 'Title, category, and description are required.' });
+    }
+
+    const shareItem = normalizeCommunityShareItem({
+      id: `share-${Date.now()}-${Math.round(Math.random() * 9999)}`,
+      title,
+      category,
+      description,
+      resourceType,
+      quizId,
+      groupId: Number.isFinite(groupId) ? groupId : null,
+      sharedBy: req.user?.username || req.user?.email || `user-${req.user?.userId || 'unknown'}`,
+      sharedByUserId: Number(req.user?.userId),
+      createdAt: new Date().toISOString(),
+      isFree: true
+    });
+
+    if (!shareItem) {
+      return res.status(400).json({ success: false, error: 'Invalid share payload.' });
+    }
+
+    const existing = loadCommunityShares();
+    const updated = [shareItem, ...existing].slice(0, 300);
+    saveCommunityShares(updated);
+
+    await logStaffActivity({
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      action: 'USER_SHARE_STUDY_RESOURCE',
+      target: shareItem.title,
+      details: `${shareItem.category} | ${shareItem.resourceType} shared for free community access`
+    });
+
+    return res.json({ success: true, message: 'Study resource shared successfully.', item: shareItem, items: updated.slice(0, 60) });
+  } catch (err) {
+    console.error('Community study share create error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to share study resource.' });
+  }
 });
 
 app.get('/api/internal/health/providers', authMiddleware, async (req, res) => {

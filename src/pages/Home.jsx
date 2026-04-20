@@ -46,41 +46,37 @@ const FALLBACK_SLIDES = [
   }
 ];
 
-const CATEGORY_PILLS = ['Technology', 'Business', 'Creative Arts', 'Personal Development', 'Science', 'Language', 'Design'];
+const CATEGORY_PILLS = [
+  'Science',
+  'Technology',
+  'Mathematics',
+  'Language',
+  'Business',
+  'Creative Arts',
+  'Exam Prep'
+];
 
-const POPULAR_COURSES = [
+const STUDY_MODES = [
   {
-    id: 'course-1',
-    title: 'Full-Stack Web Development BootCamp',
-    instructor: 'Sarah J.',
-    price: '$15.99',
-    rating: '4.8',
-    lessons: '12 weeks',
-    level: 'Beginner',
-    image:
-      'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1200&q=80'
+    id: 'mode-quiz',
+    title: 'Quiz Drill Mode',
+    category: 'Exam Prep',
+    description: 'Upload notes and get rapid quiz practice with instant feedback.',
+    cta: 'Start Quiz Drill'
   },
   {
-    id: 'course-2',
-    title: 'Academic Writing Accelerator',
-    instructor: 'Alex T.',
-    price: '$12.99',
-    rating: '4.9',
-    lessons: '8 weeks',
-    level: 'Intermediate',
-    image:
-      'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=1200&q=80'
+    id: 'mode-summary',
+    title: 'Smart Summary Mode',
+    category: 'Science',
+    description: 'Turn long notes into concise revision sheets for fast recall.',
+    cta: 'Generate Summary'
   },
   {
-    id: 'course-3',
-    title: 'Exam Strategy for High Scores',
-    instructor: 'Mina K.',
-    price: '$9.99',
-    rating: '4.7',
-    lessons: '6 weeks',
-    level: 'All Levels',
-    image:
-      'https://images.unsplash.com/photo-1513258496099-48168024aec0?auto=format&fit=crop&w=1200&q=80'
+    id: 'mode-flashcards',
+    title: 'Flashcard Mode',
+    category: 'Language',
+    description: 'Generate key terms and concept cards from your uploaded materials.',
+    cta: 'Build Flashcards'
   }
 ];
 
@@ -173,7 +169,8 @@ const Header = () => {
       <nav className={`main-nav ${mobileMenuOpen ? 'is-open' : ''}`}>
         <a href="#how">How it works</a>
         <a href="#categories">Categories</a>
-        <a href="#popular-courses">Popular Courses</a>
+        <a href="#study-modes">Study Modes</a>
+        <a href="#community-shares">Community Shares</a>
         <Link to="/generate-video">Generate Video</Link>
         <div
           className="theme-toggle"
@@ -518,6 +515,18 @@ const Hero = ({ uploadedFile, onFileChange }) => {
   const [quickAccessLoading, setQuickAccessLoading] = useState(false);
   const [homeMediaItems, setHomeMediaItems] = useState([]);
   const [openPickerSignal, setOpenPickerSignal] = useState(0);
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [communityShares, setCommunityShares] = useState([]);
+  const [communityLoading, setCommunityLoading] = useState(false);
+  const [shareForm, setShareForm] = useState({
+    title: '',
+    category: CATEGORY_PILLS[0],
+    description: '',
+    resourceType: 'quiz'
+  });
+  const [shareStatus, setShareStatus] = useState({ type: '', text: '' });
+  const [sharing, setSharing] = useState(false);
 
   useEffect(() => {
     const loadHomeMedia = async () => {
@@ -531,6 +540,30 @@ const Hero = ({ uploadedFile, onFileChange }) => {
 
     loadHomeMedia();
   }, []);
+
+  useEffect(() => {
+    const loadCommunityShares = async () => {
+      setCommunityLoading(true);
+      try {
+        const params = {};
+        if (selectedCategory !== 'All') {
+          params.category = selectedCategory;
+        }
+        if (searchQuery.trim()) {
+          params.search = searchQuery.trim();
+        }
+
+        const response = await publicAPI.getCommunityStudyShares(params);
+        setCommunityShares(Array.isArray(response?.items) ? response.items : []);
+      } catch (err) {
+        setCommunityShares([]);
+      } finally {
+        setCommunityLoading(false);
+      }
+    };
+
+    loadCommunityShares();
+  }, [selectedCategory, searchQuery]);
 
   const handleCreateGroup = () => {
     setGroupName('');
@@ -648,6 +681,55 @@ const Hero = ({ uploadedFile, onFileChange }) => {
     setOpenPickerSignal((prev) => prev + 1);
   };
 
+  const handleStartStudyMode = (mode) => {
+    const modeName = String(mode?.title || 'study').toLowerCase();
+    navigate('/generate-quiz', {
+      state: {
+        autoGenerate: false,
+        preferredMode: modeName,
+        preferredCategory: selectedCategory !== 'All' ? selectedCategory : mode?.category || CATEGORY_PILLS[0]
+      }
+    });
+  };
+
+  const handleShareFormChange = (field, value) => {
+    setShareForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleShareStudyResource = async (e) => {
+    e.preventDefault();
+    setShareStatus({ type: '', text: '' });
+
+    const payload = {
+      title: String(shareForm.title || '').trim(),
+      category: String(shareForm.category || '').trim(),
+      description: String(shareForm.description || '').trim(),
+      resourceType: String(shareForm.resourceType || 'quiz').trim().toLowerCase()
+    };
+
+    if (!payload.title || !payload.category || !payload.description) {
+      setShareStatus({ type: 'error', text: 'Please add title, category, and what you generated.' });
+      return;
+    }
+
+    setSharing(true);
+    try {
+      const response = await publicAPI.shareCommunityStudyResource(payload);
+      setCommunityShares(Array.isArray(response?.items) ? response.items : communityShares);
+      setShareForm({
+        title: '',
+        category: shareForm.category || CATEGORY_PILLS[0],
+        description: '',
+        resourceType: 'quiz'
+      });
+      setShareStatus({ type: 'success', text: response?.message || 'Shared successfully for free community access.' });
+    } catch (err) {
+      setShareStatus({ type: 'error', text: getApiErrorMessage(err, 'Unable to share right now. Please log in and try again.') });
+    } finally {
+      setSharing(false);
+    }
+  };
+
   return (
     <>
       <section className="hero-wrap" aria-label="Hero area">
@@ -659,7 +741,7 @@ const Hero = ({ uploadedFile, onFileChange }) => {
                   <span className="kicker">Learn Lite • AI Study Companion</span>
                   <h2 id="hero-heading">Effortless learning, accessible to everyone.</h2>
                   <p className="hero-lead-copy">
-                    Unlock your potential with expert-led study tools, instant notes upload, and guided quizzes designed for modern learners.
+                    Upload notes, choose your study mode, and generate guided quizzes and summaries you can share freely with your category.
                   </p>
 
                   <div className="hero-primary-actions">
@@ -695,24 +777,40 @@ const Hero = ({ uploadedFile, onFileChange }) => {
           </div>
         </div>
 
-        <section className="below-fold-shell" aria-label="Explore courses and study tools">
+        <section id="explore-courses" className="below-fold-shell" aria-label="Free study modes and community shares">
           <div className="search-strip">
             <input
               type="text"
               className="study-search"
-              placeholder="Search for courses, skills, or topics..."
-              aria-label="Search courses"
+              placeholder="Search shared study resources by topic or category..."
+              aria-label="Search free study shares"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
 
           <section id="categories" className="section section-tight" aria-label="Categories">
             <div className="section-headline">
-              <h3>Categories</h3>
-              <a href="#popular-courses">See all</a>
+              <h3>Choose Study Category</h3>
+              <span className="muted">Always free</span>
             </div>
             <div className="category-grid">
+              <button
+                key="All"
+                type="button"
+                className={`category-chip ${selectedCategory === 'All' ? 'is-active' : ''}`}
+                onClick={() => setSelectedCategory('All')}
+              >
+                <span className="category-dot" />
+                All
+              </button>
               {CATEGORY_PILLS.map((label) => (
-                <button key={label} type="button" className="category-chip">
+                <button
+                  key={label}
+                  type="button"
+                  className={`category-chip ${selectedCategory === label ? 'is-active' : ''}`}
+                  onClick={() => setSelectedCategory(label)}
+                >
                   <span className="category-dot" />
                   {label}
                 </button>
@@ -720,27 +818,30 @@ const Hero = ({ uploadedFile, onFileChange }) => {
             </div>
           </section>
 
-          <section id="popular-courses" className="section section-tight" aria-label="Popular courses">
+          <section id="study-modes" className="section section-tight" aria-label="Free study modes">
             <div className="section-headline">
-              <h3>Popular Courses</h3>
-              <a href="#learn-your-way">See all</a>
+              <h3>Free Study Modes</h3>
+              <span className="muted">No cost, no paywall</span>
             </div>
             <div className="course-grid">
-              {POPULAR_COURSES.map((course) => (
-                <article key={course.id} className="course-card hero-card">
-                  <div className="course-image-wrap">
-                    <img src={course.image} alt={course.title} className="course-image" />
-                  </div>
+              {STUDY_MODES.map((mode) => (
+                <article key={mode.id} className="course-card hero-card course-card--study-mode">
                   <div className="course-body">
                     <div className="course-meta-row">
-                      <span className="course-rating">★ {course.rating}</span>
-                      <span className="muted">{course.lessons}</span>
+                      <span className="course-rating">FREE</span>
+                      <span className="muted">{mode.category}</span>
                     </div>
-                    <h4>{course.title}</h4>
-                    <div className="course-instructor">{course.instructor}</div>
+                    <h4>{mode.title}</h4>
+                    <div className="course-instructor">{mode.description}</div>
                     <div className="course-footer">
-                      <div className="course-price">{course.price}</div>
-                      <span className="course-level">{course.level}</span>
+                      <div className="course-price">Community accessible</div>
+                      <button
+                        type="button"
+                        className="course-level"
+                        onClick={() => handleStartStudyMode(mode)}
+                      >
+                        {mode.cta}
+                      </button>
                     </div>
                   </div>
                 </article>
@@ -748,18 +849,79 @@ const Hero = ({ uploadedFile, onFileChange }) => {
             </div>
           </section>
 
-          <section id="learn-your-way" className="section section-tight" aria-label="Learn your way">
+          <section id="community-shares" className="section section-tight" aria-label="Community study shares">
             <div className="section-headline">
-              <h3>Learn Your Way</h3>
+              <h3>Community Study Shares</h3>
+              <span className="muted">
+                {communityLoading ? 'Loading...' : `${communityShares.length} shared resources`}
+              </span>
             </div>
+
+            <form className="share-form hero-card" onSubmit={handleShareStudyResource}>
+              <h4 style={{ margin: 0 }}>Share what you generated while studying</h4>
+              <p className="muted" style={{ margin: '0 0 8px 0' }}>
+                Share your generated quiz or summary so others in the same category can access it for free.
+              </p>
+              <div className="share-form-grid">
+                <input
+                  type="text"
+                  placeholder="Title (e.g. Cell Biology Quiz Pack)"
+                  value={shareForm.title}
+                  onChange={(e) => handleShareFormChange('title', e.target.value)}
+                />
+                <select
+                  value={shareForm.category}
+                  onChange={(e) => handleShareFormChange('category', e.target.value)}
+                >
+                  {CATEGORY_PILLS.map((category) => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                </select>
+                <select
+                  value={shareForm.resourceType}
+                  onChange={(e) => handleShareFormChange('resourceType', e.target.value)}
+                >
+                  <option value="quiz">Generated Quiz</option>
+                  <option value="summary">Smart Summary</option>
+                  <option value="flashcards">Flashcards</option>
+                  <option value="notes">Study Notes</option>
+                </select>
+              </div>
+              <textarea
+                rows="3"
+                placeholder="Describe what you generated and how it helps in this category..."
+                value={shareForm.description}
+                onChange={(e) => handleShareFormChange('description', e.target.value)}
+              />
+              <div className="share-form-actions">
+                <button className="btn" type="submit" disabled={sharing}>
+                  {sharing ? 'Sharing...' : 'Share for Free'}
+                </button>
+                {shareStatus.text ? (
+                  <span className={shareStatus.type === 'error' ? 'share-error' : 'share-success'}>{shareStatus.text}</span>
+                ) : null}
+              </div>
+            </form>
+
             <div className="way-grid">
-              {WAY_CARDS.map((card) => (
-                <article key={card.title} className="way-card hero-card">
-                  <div className="way-icon" aria-hidden="true" />
-                  <h4>{card.title}</h4>
-                  <p>{card.text}</p>
+              {communityShares.length === 0 ? (
+                <article className="way-card hero-card">
+                  <h4>No shared resources yet</h4>
+                  <p>Be the first to share a generated study resource in this category.</p>
                 </article>
-              ))}
+              ) : (
+                communityShares.map((item) => (
+                  <article key={item.id} className="way-card hero-card">
+                    <div className="way-icon" aria-hidden="true" />
+                    <h4>{item.title}</h4>
+                    <p>{item.description}</p>
+                    <div className="course-meta-row">
+                      <span className="course-level">{item.category}</span>
+                      <span className="muted">Shared by {item.sharedBy}</span>
+                    </div>
+                  </article>
+                ))
+              )}
             </div>
           </section>
 
@@ -767,11 +929,11 @@ const Hero = ({ uploadedFile, onFileChange }) => {
             <div>
               <h3>Join the LearnLite Community</h3>
               <p>
-                Weekly tips, study resources, and guided learning support designed to help you stay consistent.
+                Join a class group, generate resources, and share them freely with learners in your category.
               </p>
             </div>
             <button type="button" className="btn" onClick={handleQuickAccessGroup} disabled={quickAccessLoading}>
-              {quickAccessLoading ? 'Opening...' : 'Sign up for free'}
+              {quickAccessLoading ? 'Opening...' : 'Open My Study Group'}
             </button>
           </section>
 
