@@ -46,6 +46,59 @@ const FALLBACK_SLIDES = [
   }
 ];
 
+const CATEGORY_PILLS = ['Technology', 'Business', 'Creative Arts', 'Personal Development', 'Science', 'Language', 'Design'];
+
+const POPULAR_COURSES = [
+  {
+    id: 'course-1',
+    title: 'Full-Stack Web Development BootCamp',
+    instructor: 'Sarah J.',
+    price: '$15.99',
+    rating: '4.8',
+    lessons: '12 weeks',
+    level: 'Beginner',
+    image:
+      'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1200&q=80'
+  },
+  {
+    id: 'course-2',
+    title: 'Academic Writing Accelerator',
+    instructor: 'Alex T.',
+    price: '$12.99',
+    rating: '4.9',
+    lessons: '8 weeks',
+    level: 'Intermediate',
+    image:
+      'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=1200&q=80'
+  },
+  {
+    id: 'course-3',
+    title: 'Exam Strategy for High Scores',
+    instructor: 'Mina K.',
+    price: '$9.99',
+    rating: '4.7',
+    lessons: '6 weeks',
+    level: 'All Levels',
+    image:
+      'https://images.unsplash.com/photo-1513258496099-48168024aec0?auto=format&fit=crop&w=1200&q=80'
+  }
+];
+
+const WAY_CARDS = [
+  {
+    title: 'Interactive Nudges',
+    text: 'Upload notes, get guided actions, and stay focused on the next best step.'
+  },
+  {
+    title: 'Flexible Learning',
+    text: 'Move from note upload to quizzes, summaries, and review without friction.'
+  },
+  {
+    title: 'Expert Instruction',
+    text: 'The platform keeps the learning path concise, practical, and easy to follow.'
+  }
+];
+
 // Lightweight client-side sanitizer
 function sanitizeHTML(html) {
   const parser = new DOMParser();
@@ -119,10 +172,9 @@ const Header = () => {
 
       <nav className={`main-nav ${mobileMenuOpen ? 'is-open' : ''}`}>
         <a href="#how">How it works</a>
-        <a href="#features">Features</a>
+        <a href="#categories">Categories</a>
+        <a href="#popular-courses">Popular Courses</a>
         <Link to="/generate-video">Generate Video</Link>
-        <Link to="/signup">Sign Up</Link>
-        <Link to="/login">Login</Link>
         <div
           className="theme-toggle"
           id="themeSwitch"
@@ -224,8 +276,8 @@ const Slideshow = ({ mediaItems = [], onSlideChange }) => {
       onMouseLeave={() => setIsHovered(false)}
     >
       <div className="carousel-topbar">
-        <span className="kicker">Interactive slideshow</span>
-        <span className="carousel-admin-badge">Admin-controlled</span>
+        <span className="kicker">Interactive showcase</span>
+        <span className="carousel-admin-badge">Study media</span>
       </div>
 
       <div className="carousel-stage">
@@ -351,7 +403,7 @@ const FileUpload = ({ onFileChange, uploadedFile, onGenerate, openPickerSignal =
     <aside className="hero-card quick-start-card action-uploader">
       <div className="quick-start-header">
         <span className="kicker">Primary Action Area</span>
-        <h3 style={{ margin: '8px 0 0 0' }}>Drag & drop your notes to get instant quiz output</h3>
+        <h3 style={{ margin: '8px 0 0 0' }}>Drag & drop your notes to generate quizzes instantly</h3>
       </div>
       <div className="quick-start-body">
         <div
@@ -600,21 +652,35 @@ const Hero = ({ uploadedFile, onFileChange }) => {
     <>
       <section className="hero-wrap" aria-label="Hero area">
         <div className="hero-shell">
-          <div className="hero-main-column utility-hero-column">
-            <div className="hero-card hero-lead-card utility-hero-card">
-              <span className="kicker">Learn Lite • Utility-First Workspace</span>
-              <h2 id="hero-heading">Upload your notes. Generate smart quiz practice in seconds.</h2>
-              <p className="hero-lead-copy">
-                Skip browsing and go straight to value. Drop your file, extract key concepts, and start practicing immediately.
-              </p>
+          <div className="hero-main-column marketplace-hero-column">
+            <div className="hero-card hero-lead-card marketplace-hero-card">
+              <div className="marketplace-hero-grid">
+                <div className="marketplace-hero-copy">
+                  <span className="kicker">Learn Lite • AI Study Companion</span>
+                  <h2 id="hero-heading">Effortless learning, accessible to everyone.</h2>
+                  <p className="hero-lead-copy">
+                    Unlock your potential with expert-led study tools, instant notes upload, and guided quizzes designed for modern learners.
+                  </p>
 
-              <div className="hero-primary-actions">
-                <button type="button" className="btn" onClick={handlePrimaryUploadCTA}>
-                  Upload Notes
-                </button>
-                <button type="button" className="secondary" onClick={handleExamples}>
-                  Explore Courses
-                </button>
+                  <div className="hero-primary-actions">
+                    <button type="button" className="btn" onClick={handlePrimaryUploadCTA}>
+                      Start Learning Today
+                    </button>
+                    <button type="button" className="secondary" onClick={handleExamples}>
+                      Explore Courses
+                    </button>
+                  </div>
+
+                  <div className="hero-mini-stats">
+                    <span className="pill">Instant quizzes</span>
+                    <span className="pill">AI summaries</span>
+                    <span className="pill">Study on the go</span>
+                  </div>
+                </div>
+
+                <div className="marketplace-hero-visual">
+                  <Slideshow mediaItems={homeMediaItems} />
+                </div>
               </div>
 
               <div className="hero-action-area" role="region" aria-label="Drag and drop upload action">
@@ -629,48 +695,87 @@ const Hero = ({ uploadedFile, onFileChange }) => {
           </div>
         </div>
 
-        <section id="explore-courses" className="below-fold-shell" aria-label="Explore courses and media">
-          <div className="below-fold-heading">
-            <span className="kicker">Explore After Action</span>
-            <h3>Course discovery and media showcase</h3>
-            <p className="hero-summary-copy">
-              Your upload workflow comes first. Browse curated homepage media and extra learning tools after starting your quiz flow.
-            </p>
+        <section className="below-fold-shell" aria-label="Explore courses and study tools">
+          <div className="search-strip">
+            <input
+              type="text"
+              className="study-search"
+              placeholder="Search for courses, skills, or topics..."
+              aria-label="Search courses"
+            />
           </div>
 
-          <div className="below-fold-grid">
-            <Slideshow mediaItems={homeMediaItems} />
-
-            <div className="hero-summary-grid">
-              <article className="hero-card hero-summary-card">
-                <div className="kicker">Features</div>
-                <h3>Visuals, summaries, and exam-ready quizzes.</h3>
-                <p className="hero-summary-copy">
-                  Learn Lite turns uploaded notes into visual explanations, concise summaries, and practical question sets.
-                </p>
-                <div className="tag-row">
-                  {['Quiz generation', 'AI summaries', 'Fast revision'].map((tag) => (
-                    <span key={tag} className="tag-pill">{tag}</span>
-                  ))}
-                </div>
-              </article>
-
-              <article className="hero-card hero-summary-card">
-                <div className="kicker">Secure Top-Up</div>
-                <h3>Paystack-powered fuel for uninterrupted study sessions.</h3>
-                <p className="hero-summary-copy">
-                  Add Fuel safely and keep your learning workflow running when you need more AI-powered processing.
-                </p>
-                <div className="tag-row">
-                  {['Secure payments', 'Fuel credits', 'Fast checkout'].map((tag) => (
-                    <span key={tag} className="tag-pill tag-pill--accent">{tag}</span>
-                  ))}
-                </div>
-              </article>
+          <section id="categories" className="section section-tight" aria-label="Categories">
+            <div className="section-headline">
+              <h3>Categories</h3>
+              <a href="#popular-courses">See all</a>
             </div>
-          </div>
+            <div className="category-grid">
+              {CATEGORY_PILLS.map((label) => (
+                <button key={label} type="button" className="category-chip">
+                  <span className="category-dot" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </section>
 
-          <div className="hero-actions-row">
+          <section id="popular-courses" className="section section-tight" aria-label="Popular courses">
+            <div className="section-headline">
+              <h3>Popular Courses</h3>
+              <a href="#learn-your-way">See all</a>
+            </div>
+            <div className="course-grid">
+              {POPULAR_COURSES.map((course) => (
+                <article key={course.id} className="course-card hero-card">
+                  <div className="course-image-wrap">
+                    <img src={course.image} alt={course.title} className="course-image" />
+                  </div>
+                  <div className="course-body">
+                    <div className="course-meta-row">
+                      <span className="course-rating">★ {course.rating}</span>
+                      <span className="muted">{course.lessons}</span>
+                    </div>
+                    <h4>{course.title}</h4>
+                    <div className="course-instructor">{course.instructor}</div>
+                    <div className="course-footer">
+                      <div className="course-price">{course.price}</div>
+                      <span className="course-level">{course.level}</span>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section id="learn-your-way" className="section section-tight" aria-label="Learn your way">
+            <div className="section-headline">
+              <h3>Learn Your Way</h3>
+            </div>
+            <div className="way-grid">
+              {WAY_CARDS.map((card) => (
+                <article key={card.title} className="way-card hero-card">
+                  <div className="way-icon" aria-hidden="true" />
+                  <h4>{card.title}</h4>
+                  <p>{card.text}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="community-cta hero-card" aria-label="Join the Learn Lite community">
+            <div>
+              <h3>Join the LearnLite Community</h3>
+              <p>
+                Weekly tips, study resources, and guided learning support designed to help you stay consistent.
+              </p>
+            </div>
+            <button type="button" className="btn" onClick={handleQuickAccessGroup} disabled={quickAccessLoading}>
+              {quickAccessLoading ? 'Opening...' : 'Sign up for free'}
+            </button>
+          </section>
+
+          <div className="hero-actions-row hero-actions-row--compact">
             <button className="btn" id="createGroupBtn" onClick={handleCreateGroup}>
               Create Class Group
             </button>
@@ -679,9 +784,6 @@ const Hero = ({ uploadedFile, onFileChange }) => {
             </button>
             <button className="secondary" id="myGroupBtn" onClick={handleQuickAccessGroup} disabled={quickAccessLoading}>
               {quickAccessLoading ? 'Opening...' : 'Go to My Group'}
-            </button>
-            <button className="secondary" id="examplesBtn" onClick={handleExamples}>
-              See Showcase
             </button>
           </div>
         </section>
@@ -729,8 +831,10 @@ const Hero = ({ uploadedFile, onFileChange }) => {
 
 const Features = () => {
   return (
-    <section id="how" className="section" aria-label="How it works">
-      <h3 style={{ margin: '0 0 8px 0' }}>How it works</h3>
+    <section id="how" className="section section-tight" aria-label="How it works">
+      <div className="section-headline">
+        <h3>How it works</h3>
+      </div>
       <div className="features" id="features">
         <div className="feature">
           <h4>1. Upload notes</h4>
@@ -998,6 +1102,7 @@ export default function Home() {
     <div className="container" id="app">
       <Header />
       <Hero uploadedFile={uploadedFile} onFileChange={setFile} />
+      <Features />
       <Footer onOpenContact={() => setIsContactOpen(true)} />
 
       <Modal isOpen={isContactOpen} onClose={() => setIsContactOpen(false)}>

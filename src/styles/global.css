@@ -1562,6 +1562,26 @@ footer {
   margin: 0 auto;
 }
 
+.marketplace-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.95fr);
+  gap: 22px;
+  align-items: center;
+}
+
+.marketplace-hero-copy {
+  display: grid;
+  gap: 14px;
+}
+
+.marketplace-hero-copy h2 {
+  max-width: 14ch;
+}
+
+.marketplace-hero-visual .carousel-shell {
+  min-height: 330px;
+}
+
 .hero-lead-card {
   gap: 16px;
   padding: 26px;
@@ -1587,6 +1607,12 @@ footer {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.hero-mini-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .hero-primary-actions .btn {
@@ -1638,6 +1664,199 @@ footer {
   margin-top: 74px;
   padding-top: 28px;
   border-top: 1px solid rgba(145, 197, 255, 0.2);
+}
+
+.search-strip {
+  margin: 4px 0 18px;
+}
+
+.study-search {
+  width: 100%;
+  border: 1px solid rgba(118, 182, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(10, 19, 31, 0.92);
+  color: var(--text);
+  padding: 14px 18px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.section-tight {
+  margin-top: 22px;
+}
+
+.section-headline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.section-headline h3 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.section-headline a {
+  color: #94c8ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.category-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.category-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(128, 183, 255, 0.16);
+  background: rgba(11, 19, 30, 0.9);
+  color: #d8e9f9;
+  font-weight: 700;
+  min-height: 62px;
+}
+
+.category-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #15d5ff, #0b61ff);
+  box-shadow: 0 0 10px rgba(21, 213, 255, 0.4);
+}
+
+.course-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.course-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.course-image-wrap {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+}
+
+.course-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.course-body {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.course-meta-row,
+.course-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.course-meta-row {
+  font-size: 12px;
+}
+
+.course-rating {
+  color: #ffd67a;
+  font-weight: 800;
+}
+
+.course-body h4 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.course-instructor {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.course-price {
+  color: #dff5ff;
+  font-weight: 800;
+}
+
+.course-level {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(21, 213, 255, 0.1);
+  border: 1px solid rgba(21, 213, 255, 0.18);
+  color: #bfefff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.way-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.way-card {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.way-card h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.way-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.way-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(21, 213, 255, 0.24), rgba(11, 97, 255, 0.18));
+  border: 1px solid rgba(129, 204, 255, 0.24);
+}
+
+.community-cta {
+  margin-top: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px;
+  background: linear-gradient(145deg, rgba(9, 23, 37, 0.96), rgba(10, 18, 31, 0.9));
+}
+
+.community-cta h3 {
+  margin: 0 0 6px 0;
+  font-size: 1.2rem;
+}
+
+.community-cta p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.hero-actions-row--compact {
+  margin-top: 16px;
 }
 
 .below-fold-heading {
@@ -1720,6 +1939,32 @@ footer {
     min-width: 0;
   }
 
+  .marketplace-hero-grid,
+  .category-grid,
+  .course-grid,
+  .way-grid,
+  .community-cta {
+    grid-template-columns: 1fr;
+  }
+
+  .marketplace-hero-copy h2 {
+    max-width: 100%;
+  }
+
+  .community-cta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .section-headline {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .category-chip {
+    min-height: 54px;
+  }
+
   .action-uploader {
     padding: 14px;
   }
@@ -1739,6 +1984,17 @@ footer {
 }
 
 @media (min-width: 641px) and (max-width: 1100px) {
+  .marketplace-hero-grid,
+  .community-cta {
+    grid-template-columns: 1fr;
+  }
+
+  .course-grid,
+  .way-grid,
+  .category-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .below-fold-grid {
     grid-template-columns: 1fr;
   }
