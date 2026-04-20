@@ -1122,8 +1122,7 @@ export default function QuizGenerator() {
             </button>
 
             <div className="workspace-chat-header__meta">
-              <span>{attachedNote ? `Attached: ${attachedNote.name}` : 'No note attached yet'}</span>
-              <span>Fuel: {loadingFuel ? '...' : fuelBalance}</span>
+              <span>{attachedNote ? `Attached: ${attachedNote.name}` : 'No note attached'} • Fuel: {loadingFuel ? '...' : fuelBalance}</span>
             </div>
           </header>
 
