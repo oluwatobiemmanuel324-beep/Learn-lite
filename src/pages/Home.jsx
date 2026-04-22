@@ -34,9 +34,9 @@ const FALLBACK_SLIDES = [
   },
   {
     id: 'slide-2',
-    title: 'Admin-Curated Media for the Homepage',
-    subtitle: 'Your assigned ops and social-media admin controls what appears on the landing page.',
-    kicker: 'Managed by Admin'
+    title: 'Study Smarter with Personalized Paths',
+    subtitle: 'Pick your mode, stay consistent, and get better results each study session.',
+    kicker: 'Smart Study Flow'
   },
   {
     id: 'slide-3',
@@ -240,9 +240,9 @@ const Slideshow = ({ mediaItems = [], onSlideChange }) => {
       id: 'fallback-2',
       type: 'image',
       url: makeSVGDataURL(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800' preserveAspectRatio='xMidYMid slice'><defs><linearGradient id='g2' x1='0' x2='1' y1='0' y2='1'><stop offset='0' stop-color='#ff7a00'/><stop offset='1' stop-color='#ff3da1'/></linearGradient></defs><rect width='1200' height='800' fill='url(#g2)'/><circle cx='260' cy='220' r='200' fill='rgba(255,255,255,0.10)'/><circle cx='900' cy='500' r='300' fill='rgba(255,255,255,0.12)'/></svg>`),
-      title: 'Admin-Curated Media for the Homepage',
-      subtitle: 'Your assigned admin can update the public homepage visuals at any time.',
-      kicker: 'Managed by Admin'
+      title: 'Study Smarter with Personalized Paths',
+      subtitle: 'Pick your mode, stay consistent, and get better results each study session.',
+      kicker: 'Smart Study Flow'
     },
     {
       id: 'fallback-3',
@@ -259,8 +259,8 @@ const Slideshow = ({ mediaItems = [], onSlideChange }) => {
     type: item.type || (item.mimeType?.startsWith('video/') ? 'video' : 'image'),
     url: item.url,
     title: item.title || item.fileName || `Slide ${index + 1}`,
-    subtitle: item.description || item.caption || 'Curated by the assigned admin for homepage visitors.',
-    kicker: item.kicker || 'Admin-managed showcase'
+    subtitle: item.description || item.caption || 'Upload your notes and generate quizzes, explanations, and revision support in minutes.',
+    kicker: item.kicker || 'Learn Lite Study Space'
   }));
 
   const activeSlide = slides[current % slides.length];
@@ -349,6 +349,10 @@ const Slideshow = ({ mediaItems = [], onSlideChange }) => {
 const FileUpload = ({ onFileChange, uploadedFile, onGenerate, openPickerSignal = 0 }) => {
   const [preview, setPreview] = useState(null);
   const [qCount, setQCount] = useState(10);
+  const [difficulty, setDifficulty] = useState('mixed');
+  const [mode, setMode] = useState('exam-ready');
+  const [startInExamMode, setStartInExamMode] = useState(false);
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
   const fileInputRef = useRef(null);
   const [generating, setGenerating] = useState(false);
 
@@ -401,7 +405,12 @@ const FileUpload = ({ onFileChange, uploadedFile, onGenerate, openPickerSignal =
 
     setGenerating(true);
     try {
-      await onGenerate(uploadedFile, { questionCount: qCount });
+      await onGenerate(uploadedFile, {
+        questionCount: qCount,
+        difficulty,
+        mode,
+        startInExamMode
+      });
     } catch (err) {
       alert('Unable to start quiz generation right now. Please try again.');
     } finally {
@@ -414,82 +423,167 @@ const FileUpload = ({ onFileChange, uploadedFile, onGenerate, openPickerSignal =
     blob.name = 'sample-notes.txt';
     handleFile(blob);
     setQCount(12);
+    setDifficulty('mixed');
+    setMode('exam-ready');
+    setStartInExamMode(false);
   };
 
   return (
-    <aside className="hero-card quick-start-card action-uploader">
-      <div className="quick-start-header">
-        <span className="kicker">Primary Action Area</span>
-        <h3 style={{ margin: '8px 0 0 0' }}>Drag & drop your notes to generate quizzes instantly</h3>
-      </div>
-      <div className="quick-start-body">
-        <div
-          className="dropzone"
-          id="dropzone"
-          tabIndex="0"
-          role="button"
-          aria-label="Upload notes area. Press enter to browse files."
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          onClick={() => fileInputRef.current?.click()}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              fileInputRef.current?.click();
-            }
-          }}
-        >
-          <svg width="72" height="72" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ opacity: 0.95 }}>
-            <path d="M12 3v10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M8 7l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            <rect x="3" y="13" width="18" height="8" rx="2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <div style={{ fontWeight: 800 }}>Drag & drop your notes here</div>
-          <div className="muted" style={{ fontSize: '13px' }}>
-            PDF, PNG, JPG — up to 20MB
-          </div>
-          <div className="quick-start-actions">
-            <label className="btn" htmlFor="fileInput" style={{ cursor: 'pointer' }}>
-              Browse files
-            </label>
-            <button className="secondary" id="sampleBtn" onClick={(e) => { e.stopPropagation(); handleSample(); }}>
-              Use sample note
-            </button>
-          </div>
+    <>
+      <aside className="hero-card quick-start-card action-uploader">
+        <div className="quick-start-header">
+          <span className="kicker">Primary Action Area</span>
+          <h3 style={{ margin: '8px 0 0 0' }}>Drag & drop your notes to generate quizzes instantly</h3>
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          id="fileInput"
-          accept="application/pdf,image/*"
-          style={{ display: 'none' }}
-          onChange={(e) => handleFile(e.target.files?.[0])}
-        />
-        {uploadedFile && (
-          <div id="previewArea" style={{ marginTop: '12px' }}>
-            <div className="preview">
-              {preview && <img id="thumb" src={preview} alt="file preview" />}
-              <div className="file-meta">
-                <div id="fileName" style={{ fontWeight: 800 }}>
-                  {uploadedFile.name}
-                </div>
-                <div className="muted" id="fileSize">
-                  {humanSize(uploadedFile.size)}
+        <div className="quick-start-body">
+          <div
+            className="dropzone"
+            id="dropzone"
+            tabIndex="0"
+            role="button"
+            aria-label="Upload notes area. Press enter to browse files."
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onClick={() => fileInputRef.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
+          >
+            <svg width="72" height="72" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ opacity: 0.95 }}>
+              <path d="M12 3v10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M8 7l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              <rect x="3" y="13" width="18" height="8" rx="2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <div style={{ fontWeight: 800 }}>Drag & drop your notes here</div>
+            <div className="muted" style={{ fontSize: '13px' }}>
+              PDF, PNG, JPG — up to 20MB
+            </div>
+            <div className="quick-start-actions">
+              <label className="btn" htmlFor="fileInput" style={{ cursor: 'pointer' }}>
+                Browse files
+              </label>
+              <button className="secondary" id="sampleBtn" onClick={(e) => { e.stopPropagation(); handleSample(); }}>
+                Use sample note
+              </button>
+            </div>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            id="fileInput"
+            accept="application/pdf,image/*"
+            style={{ display: 'none' }}
+            onChange={(e) => handleFile(e.target.files?.[0])}
+          />
+          {uploadedFile && (
+            <div id="previewArea" style={{ marginTop: '12px' }}>
+              <div className="preview">
+                {preview && <img id="thumb" src={preview} alt="file preview" />}
+                <div className="file-meta">
+                  <div id="fileName" style={{ fontWeight: 800 }}>
+                    {uploadedFile.name}
+                  </div>
+                  <div className="muted" id="fileSize">
+                    {humanSize(uploadedFile.size)}
+                  </div>
                 </div>
               </div>
+              <div className="generate">
+                <button className="btn" id="generateBtn" onClick={handleGenerate} disabled={generating}>
+                  {generating ? 'Generating...' : 'Generate Quiz'}
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  id="moreOptions"
+                  onClick={() => setShowMoreOptions(true)}
+                >
+                  More options
+                </button>
+              </div>
             </div>
-            <div className="generate">
-              <button className="btn" id="generateBtn" onClick={handleGenerate} disabled={generating}>
-                {generating ? 'Generating...' : 'Generate Quiz'}
-              </button>
-              <button className="secondary" id="moreOptions">
-                More options
-              </button>
-            </div>
+          )}
+        </div>
+      </aside>
+
+      <Modal isOpen={showMoreOptions} onClose={() => setShowMoreOptions(false)}>
+        <h3>Quiz Generation Options</h3>
+        <p className="muted" style={{ margin: '8px 0 14px 0' }}>
+          Choose how you want Learn Lite to generate questions from your uploaded note.
+        </p>
+
+        <div className="quick-options-grid">
+          <div>
+            <label htmlFor="option-question-count">Question count</label>
+            <select
+              id="option-question-count"
+              value={qCount}
+              onChange={(e) => setQCount(Number(e.target.value) || 10)}
+            >
+              <option value={5}>5 questions</option>
+              <option value={10}>10 questions</option>
+              <option value={15}>15 questions</option>
+              <option value={20}>20 questions</option>
+            </select>
           </div>
-        )}
-      </div>
-    </aside>
+
+          <div>
+            <label htmlFor="option-difficulty">Difficulty</label>
+            <select
+              id="option-difficulty"
+              value={difficulty}
+              onChange={(e) => setDifficulty(e.target.value)}
+            >
+              <option value="easy">Easy</option>
+              <option value="mixed">Mixed</option>
+              <option value="hard">Hard</option>
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="option-mode">Mode</label>
+            <select
+              id="option-mode"
+              value={mode}
+              onChange={(e) => setMode(e.target.value)}
+            >
+              <option value="exam-ready">Exam Ready</option>
+              <option value="practice">Practice</option>
+              <option value="revision">Revision</option>
+            </select>
+          </div>
+        </div>
+
+        <label className="quick-options-check">
+          <input
+            type="checkbox"
+            checked={startInExamMode}
+            onChange={(e) => setStartInExamMode(Boolean(e.target.checked))}
+          />
+          Start directly in timed CBT mode after generation
+        </label>
+
+        <div className="quick-options-actions">
+          <button type="button" className="secondary" onClick={() => setShowMoreOptions(false)}>
+            Close
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={async () => {
+              setShowMoreOptions(false);
+              await handleGenerate();
+            }}
+            disabled={generating || !uploadedFile}
+          >
+            {generating ? 'Generating...' : 'Generate with options'}
+          </button>
+        </div>
+      </Modal>
+    </>
   );
 };
 
@@ -533,6 +627,7 @@ const Hero = ({ uploadedFile, onFileChange }) => {
   const [joinCode, setJoinCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [quickAccessLoading, setQuickAccessLoading] = useState(false);
+  const [myGroups, setMyGroups] = useState([]);
   const [homeMediaItems, setHomeMediaItems] = useState([]);
   const [openPickerSignal, setOpenPickerSignal] = useState(0);
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -595,6 +690,19 @@ const Hero = ({ uploadedFile, onFileChange }) => {
     setModalType('join');
   };
 
+  const openGroupWorkspace = (group) => {
+    if (!group?.id) return;
+
+    localStorage.setItem('currentGroupId', String(group.id));
+    localStorage.setItem('lastOpenedGroupId', String(group.id));
+    if (group.joinCode) {
+      localStorage.setItem('currentGroupCode', group.joinCode);
+    }
+
+    setModalType(null);
+    navigate(`/generate-quiz/${group.id}`);
+  };
+
   const handleQuickAccessGroup = async () => {
     if (quickAccessLoading) return;
 
@@ -608,13 +716,15 @@ const Hero = ({ uploadedFile, onFileChange }) => {
         return;
       }
 
-      const preferredGroup = groups.find((group) => group.isOwner) || groups[0];
-      localStorage.setItem('currentGroupId', String(preferredGroup.id));
-      if (preferredGroup.joinCode) {
-        localStorage.setItem('currentGroupCode', preferredGroup.joinCode);
-      }
+      const lastOpenedGroupId = Number(localStorage.getItem('lastOpenedGroupId') || localStorage.getItem('currentGroupId') || '0');
+      const sortedGroups = [...groups].sort((a, b) => {
+        if (a.id === lastOpenedGroupId) return -1;
+        if (b.id === lastOpenedGroupId) return 1;
+        return 0;
+      });
 
-      navigate(`/generate-quiz/${preferredGroup.id}`);
+      setMyGroups(sortedGroups);
+      setModalType('groups');
     } catch (err) {
       const message = getApiErrorMessage(err, 'Unable to access your group right now.');
       alert(message);
@@ -634,6 +744,7 @@ const Hero = ({ uploadedFile, onFileChange }) => {
       const result = await groupAPI.createGroup(groupName);
       if (result.success) {
         localStorage.setItem('currentGroupId', result.group.id);
+        localStorage.setItem('lastOpenedGroupId', result.group.id);
         localStorage.setItem('currentGroupCode', result.group.joinCode);
         setModalType(null);
         navigate(`/generate-quiz/${result.group.id}`);
@@ -658,6 +769,7 @@ const Hero = ({ uploadedFile, onFileChange }) => {
       const result = await groupAPI.joinGroupByCode(joinCode.trim());
       if (result.success) {
         localStorage.setItem('currentGroupId', result.group.id);
+        localStorage.setItem('lastOpenedGroupId', result.group.id);
         localStorage.setItem('currentGroupCode', result.group.joinCode);
         setModalType(null);
         navigate(`/generate-quiz/${result.group.id}`);
@@ -671,6 +783,7 @@ const Hero = ({ uploadedFile, onFileChange }) => {
 
       if (existingGroupId && /already a member/i.test(message)) {
         localStorage.setItem('currentGroupId', existingGroupId);
+        localStorage.setItem('lastOpenedGroupId', existingGroupId);
         if (existingGroupCode) {
           localStorage.setItem('currentGroupCode', existingGroupCode);
         }
@@ -693,8 +806,23 @@ const Hero = ({ uploadedFile, onFileChange }) => {
     }
   };
 
-  const handleGenerateFromHome = async () => {
-    navigate('/generate-quiz', { state: { autoGenerate: true } });
+  const handleGenerateFromHome = async (file, options = {}) => {
+    if (file) {
+      onFileChange(file);
+    }
+
+    navigate('/generate-quiz', {
+      state: {
+        autoGenerate: true,
+        startInExamMode: Boolean(options?.startInExamMode),
+        generationOptions: {
+          questionCount: Number(options?.questionCount) || 10,
+          difficulty: String(options?.difficulty || 'mixed').toLowerCase(),
+          mode: String(options?.mode || 'exam-ready').toLowerCase(),
+          startInExamMode: Boolean(options?.startInExamMode)
+        }
+      }
+    });
   };
 
   const handlePrimaryUploadCTA = () => {
@@ -1002,6 +1130,36 @@ const Hero = ({ uploadedFile, onFileChange }) => {
         <button className="btn" id="proceedJoin" onClick={proceedJoin} disabled={loading} style={{ width: '100%' }}>
           {loading ? 'Joining...' : 'Join Group'}
         </button>
+      </Modal>
+
+      <Modal isOpen={modalType === 'groups'} onClose={() => setModalType(null)}>
+        <h3>My Class Groups</h3>
+        <p className="muted" style={{ margin: '8px 0 14px 0' }}>
+          Pick a group to continue studying. Your last opened group appears first.
+        </p>
+
+        <div className="my-groups-list">
+          {myGroups.map((group) => {
+            const isLastOpened = String(group.id) === String(localStorage.getItem('lastOpenedGroupId') || localStorage.getItem('currentGroupId') || '');
+            return (
+              <article className="my-group-item" key={group.id}>
+                <div className="my-group-item__meta">
+                  <h4>{group.name}</h4>
+                  <p>
+                    {group.memberCount || 0} members • {group.role}
+                    {group.joinCode ? ` • Code: ${group.joinCode}` : ''}
+                  </p>
+                </div>
+                <div className="my-group-item__actions">
+                  {isLastOpened ? <span className="my-group-badge">Last opened</span> : null}
+                  <button className="btn" type="button" onClick={() => openGroupWorkspace(group)}>
+                    Open Group
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
       </Modal>
     </>
   );

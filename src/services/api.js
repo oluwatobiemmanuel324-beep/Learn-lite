@@ -271,7 +271,7 @@ export const userAPI = {
 };
 
 export const publicAPI = {
-  getHomeMedia: () => client.get('/api/home-media'),
+  getHomeMedia: () => client.get('/api/home-media', { params: { t: Date.now() } }),
   getCommunityStudyShares: (params = {}) => client.get('/api/community/study-shares', { params }),
   shareCommunityStudyResource: (payload) => client.post('/api/community/study-shares', payload)
 };
@@ -319,6 +319,7 @@ export const adminAPI = {
   createStaff: (payload) => client.post('/api/admin/create-staff', payload),
   assignRoleByEmail: (email, role) => client.post('/api/admin/assign-role', { email, role }),
   overwritePassword: (email, newPassword) => client.post('/api/admin/overwrite-password', { email, newPassword }),
+  updateAdminCredentials: (userId, payload) => client.patch(`/api/admin/owner/admin-credentials/${userId}`, payload),
   setAccountActive: (email, isActive) => client.post('/api/admin/set-active', { email, isActive }),
   rootKillSwitch: (targetUserId, reason) => client.post('/api/root/kill-switch', { targetUserId, reason }),
   rootRoleEscalator: (targetUserId, newRole, reason) => client.post('/api/root/role-escalator', { targetUserId, newRole, reason }),

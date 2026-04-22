@@ -7,6 +7,7 @@ import { Area, AreaChart, CartesianGrid, Pie, PieChart, ResponsiveContainer, Too
 
 const CARD_CLASS = 'dasher-card mb-6';
 const HERO_STYLE = { background: 'linear-gradient(135deg, #450a0a 0%, #065f46 55%, #064e3b 100%)', border: '1px solid rgba(16,185,129,0.28)', borderRadius: 16, padding: 24 };
+const MANAGEABLE_ADMIN_ROLES = ['ROOT_ADMIN', 'ADMIN', 'FINANCE_CONTROLLER', 'ACADEMIC_REGISTRAR', 'OPS_MODERATOR', 'SOCIAL_MEDIA_CONTROLLER'];
 
 export default function SystemOwnerDashboard({ dashboardRole }) {
   const navigate = useNavigate();
@@ -17,16 +18,41 @@ export default function SystemOwnerDashboard({ dashboardRole }) {
   const [error, setError] = useState('');
   const [overview, setOverview] = useState({ businessHealth: { score: 0 } });
   const [auditLogs, setAuditLogs] = useState([]);
+  const [adminAccounts, setAdminAccounts] = useState([]);
+  const [credentialDrafts, setCredentialDrafts] = useState({});
+  const [credentialBusyId, setCredentialBusyId] = useState(null);
+  const [credentialStatus, setCredentialStatus] = useState({ type: '', text: '' });
   const pollRef = useRef(null);
 
   const loadData = async () => {
     try {
-      const [owner, audit] = await Promise.all([
+      const [owner, audit, usersPayload] = await Promise.all([
         adminAPI.getOwnerOverview(),
-        adminAPI.getAuditLogs(1, 12)
+        adminAPI.getAuditLogs(1, 12),
+        adminAPI.getUsers()
       ]);
       setOverview(owner.overview || { businessHealth: { score: 0 } });
       setAuditLogs(audit.logs || []);
+
+      const users = Array.isArray(usersPayload?.users) ? usersPayload.users : [];
+      const admins = users
+        .filter((item) => MANAGEABLE_ADMIN_ROLES.includes(String(item?.role || '').toUpperCase()))
+        .sort((a, b) => String(a.username || '').localeCompare(String(b.username || '')));
+
+      setAdminAccounts(admins);
+      setCredentialDrafts((current) => {
+        const next = { ...current };
+        admins.forEach((admin) => {
+          const key = String(admin.id);
+          if (!next[key]) {
+            next[key] = { email: String(admin.email || ''), newPassword: '' };
+          } else if (!next[key].email) {
+            next[key] = { ...next[key], email: String(admin.email || '') };
+          }
+        });
+        return next;
+      });
+
       setError('');
     } catch (err) {
       setError(getApiErrorMessage(err, 'Failed to load system owner workspace'));
@@ -56,6 +82,61 @@ export default function SystemOwnerDashboard({ dashboardRole }) {
     { name: 'Operations', value: Number(overview.businessHealth?.newQuestionsLast7Days || 0) || 20 },
     { name: 'Revenue', value: Number(overview.businessHealth?.revenueLast30Days || 0) / 1000 || 25 }
   ]), [overview.businessHealth]);
+
+  const handleCredentialDraftChange = (adminId, field, value) => {
+    const key = String(adminId);
+    setCredentialDrafts((current) => ({
+      ...current,
+      [key]: {
+        ...(current[key] || {}),
+        [field]: value
+      }
+    }));
+  };
+
+  const handleUpdateAdminCredentials = async (admin) => {
+    const key = String(admin.id);
+    const draft = credentialDrafts[key] || { email: admin.email || '', newPassword: '' };
+    const nextEmail = String(draft.email || '').trim();
+    const nextPassword = String(draft.newPassword || '').trim();
+
+    if (!nextEmail && !nextPassword) {
+      setCredentialStatus({ type: 'error', text: 'Add a new email or password before updating.' });
+      return;
+    }
+
+    const payload = {};
+    if (nextEmail && nextEmail !== String(admin.email || '')) {
+      payload.email = nextEmail;
+    }
+    if (nextPassword) {
+      payload.newPassword = nextPassword;
+    }
+
+    if (!Object.keys(payload).length) {
+      setCredentialStatus({ type: 'error', text: 'No credential changes detected for this admin.' });
+      return;
+    }
+
+    setCredentialBusyId(admin.id);
+    setCredentialStatus({ type: '', text: '' });
+    try {
+      const result = await adminAPI.updateAdminCredentials(admin.id, payload);
+      setCredentialStatus({ type: 'success', text: result?.message || `Updated login details for ${admin.username}.` });
+      setCredentialDrafts((current) => ({
+        ...current,
+        [key]: {
+          email: String(result?.user?.email || payload.email || admin.email || ''),
+          newPassword: ''
+        }
+      }));
+      await loadData();
+    } catch (err) {
+      setCredentialStatus({ type: 'error', text: getApiErrorMessage(err, 'Failed to update admin credentials.') });
+    } finally {
+      setCredentialBusyId(null);
+    }
+  };
 
   return (
       <DashboardLayout userRole={effectiveRole} userName={user?.username}>
@@ -98,6 +179,76 @@ export default function SystemOwnerDashboard({ dashboardRole }) {
           <p className="m-0 mt-2 text-sm leading-6">{error}</p>
         </div>
       ) : null}
+
+      <div id="admin-login-controls" className={`${CARD_CLASS} scroll-mt-8`}>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h3 className="m-0 text-2xl font-bold tracking-tight text-slate-100">Admin Login Controls</h3>
+            <p className="mb-0 mt-2 text-sm text-gray-400">Change admin email and password from the owner dashboard when credentials need rotation.</p>
+          </div>
+          <button type="button" onClick={loadData} className="dasher-btn-primary text-xs">Reload Admins</button>
+        </div>
+
+        {credentialStatus.text ? (
+          <div className={`mb-4 rounded-xl border p-3 text-sm ${credentialStatus.type === 'error' ? 'border-rose-500/30 bg-rose-500/10 text-rose-100' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'}`}>
+            {credentialStatus.text}
+          </div>
+        ) : null}
+
+        <div className="space-y-3">
+          {adminAccounts.length === 0 ? (
+            <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-4 text-sm text-slate-300">
+              No manageable admin accounts found.
+            </div>
+          ) : (
+            adminAccounts.map((admin) => {
+              const draft = credentialDrafts[String(admin.id)] || { email: admin.email || '', newPassword: '' };
+
+              return (
+                <div key={admin.id} className="rounded-xl border border-slate-700/60 bg-slate-900/40 p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="m-0 text-base font-semibold text-slate-100">{admin.username}</p>
+                      <p className="m-0 mt-1 text-xs uppercase tracking-[0.14em] text-slate-400">{admin.role}</p>
+                    </div>
+                    <span className={`rounded-full px-3 py-1 text-xs font-semibold ${admin.isActive ? 'bg-emerald-500/15 text-emerald-200' : 'bg-rose-500/15 text-rose-200'}`}>
+                      {admin.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <input
+                      type="email"
+                      value={draft.email}
+                      onChange={(event) => handleCredentialDraftChange(admin.id, 'email', event.target.value)}
+                      placeholder="Admin email"
+                      className="w-full rounded-lg border border-slate-600 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-400"
+                    />
+                    <input
+                      type="text"
+                      value={draft.newPassword}
+                      onChange={(event) => handleCredentialDraftChange(admin.id, 'newPassword', event.target.value)}
+                      placeholder="New password (leave blank to keep current)"
+                      className="w-full rounded-lg border border-slate-600 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-400"
+                    />
+                  </div>
+
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      className="dasher-btn-primary text-xs"
+                      onClick={() => handleUpdateAdminCredentials(admin)}
+                      disabled={credentialBusyId === admin.id}
+                    >
+                      {credentialBusyId === admin.id ? 'Updating...' : 'Update Login'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
 
       <div id="ceo-pulse" className="grid gap-6 md:grid-cols-2 xl:grid-cols-4 scroll-mt-8">
         <div className={CARD_CLASS}>

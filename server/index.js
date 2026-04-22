@@ -217,9 +217,28 @@ function normalizeHomeMediaItem(item) {
 
   const url = String(item.url || '').trim();
   const relativeUrl = url.includes('/home-media/') ? url.slice(url.indexOf('/home-media/')) : url;
+  const fileName = String(item.fileName || '').trim();
+  const mimeType = String(item.mimeType || '').toLowerCase();
+  const mimeTypeGuess = inferMediaTypeFromMime(mimeType);
+  let guessedType = 'unknown';
+
+  if (item.type === 'image' || item.type === 'video') {
+    guessedType = item.type;
+  } else if (mimeTypeGuess !== 'unknown') {
+    guessedType = mimeTypeGuess;
+  } else if (/\.(png|jpg|jpeg|gif|webp|svg)$/i.test(relativeUrl || fileName)) {
+    guessedType = 'image';
+  } else if (/\.(mp4|webm|mov|m4v|ogg)$/i.test(relativeUrl || fileName)) {
+    guessedType = 'video';
+  }
 
   return {
     ...item,
+    id: String(item.id || crypto.randomUUID()),
+    title: String(item.title || '').trim() || 'Learn Lite highlight',
+    type: guessedType,
+    mimeType,
+    fileName,
     url: relativeUrl || url
   };
 }
@@ -1205,9 +1224,17 @@ if (NODE_ENV === 'production') {
 }
 
 app.get('/api/home-media', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
   const items = loadHomeMediaItems()
     .filter((item) => item?.url && (item?.type === 'image' || item?.type === 'video'))
-    .slice(0, 24);
+    .sort((a, b) => {
+      const aTime = new Date(a?.uploadedAt || a?.createdAt || 0).getTime();
+      const bTime = new Date(b?.uploadedAt || b?.createdAt || 0).getTime();
+      return bTime - aTime;
+    });
 
   return res.json({ success: true, items });
 });
@@ -4840,7 +4867,7 @@ app.post('/api/admin/ops/home-media', authMiddleware, requireRoles(['SYSTEM_OWNE
       uploadedBy: req.user?.email || `user-${req.user?.userId || 'unknown'}`
     };
 
-    const updatedItems = [nextItem, ...existingItems].slice(0, 30);
+    const updatedItems = [nextItem, ...existingItems];
     saveHomeMediaItems(updatedItems);
 
     await logStaffActivity({
@@ -5284,6 +5311,87 @@ app.post('/api/admin/overwrite-password', authMiddleware, systemOwnerMiddleware,
     });
   } catch (err) {
     console.error('Overwrite password error:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// SYSTEM_OWNER can update admin login credentials (email and/or password)
+app.patch('/api/admin/owner/admin-credentials/:userId', authMiddleware, systemOwnerMiddleware, async (req, res) => {
+  try {
+    const targetUserId = Number(req.params.userId);
+    const nextEmailRaw = req.body?.email;
+    const nextPasswordRaw = req.body?.newPassword;
+
+    if (!Number.isFinite(targetUserId)) {
+      return res.status(400).json({ success: false, error: 'Valid userId is required.' });
+    }
+
+    const target = assertNotSovereignTarget(await getUserByIdForProtection(targetUserId));
+
+    const targetRole = String(target.role || '').toUpperCase();
+    if (!ALL_ADMIN_ROLES.includes(targetRole)) {
+      return res.status(400).json({ success: false, error: 'Target account is not an admin account.' });
+    }
+
+    const updates = {};
+
+    if (typeof nextEmailRaw === 'string' && nextEmailRaw.trim()) {
+      const normalizedEmail = nextEmailRaw.trim().toLowerCase();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      if (!emailRegex.test(normalizedEmail)) {
+        return res.status(400).json({ success: false, error: 'Please provide a valid email address.' });
+      }
+
+      const existing = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+        select: { id: true }
+      });
+
+      if (existing && Number(existing.id) !== targetUserId) {
+        return res.status(409).json({ success: false, error: 'Email is already in use by another account.' });
+      }
+
+      updates.email = normalizedEmail;
+    }
+
+    if (typeof nextPasswordRaw === 'string' && nextPasswordRaw.trim()) {
+      const nextPassword = nextPasswordRaw.trim();
+      if (nextPassword.length < 6) {
+        return res.status(400).json({ success: false, error: 'Password must be at least 6 characters.' });
+      }
+
+      updates.password = await bcrypt.hash(nextPassword, 10);
+    }
+
+    if (!Object.keys(updates).length) {
+      return res.status(400).json({ success: false, error: 'Provide email and/or newPassword to update.' });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: targetUserId },
+      data: updates,
+      select: { id: true, username: true, email: true, role: true, isActive: true }
+    });
+
+    await logStaffActivity({
+      actorId: req.user.userId,
+      actorRole: req.user.role,
+      action: 'OWNER_UPDATE_ADMIN_CREDENTIALS',
+      target: updated.email,
+      details: `Updated credentials for ${updated.username} (${updated.role})`
+    });
+
+    return res.json({
+      success: true,
+      message: 'Admin credentials updated successfully.',
+      user: updated
+    });
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ success: false, error: err.message });
+    }
+    console.error('Update admin credentials error:', err);
     return res.status(500).json({ success: false, error: 'Server error' });
   }
 });
