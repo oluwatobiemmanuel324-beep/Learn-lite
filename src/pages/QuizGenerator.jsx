@@ -484,7 +484,8 @@ export default function QuizGenerator() {
     }
 
     const messageText = draftMessage.trim();
-    const mentionsAI = /(^|\s)@learnlite\b/i.test(messageText);
+    const mentionRegex = /@(?:learnlite|leanlite)\b/i;
+    const mentionsAI = mentionRegex.test(messageText);
     console.log('[LearnLite Chat] submit:parsed', {
       messageText,
       mentionsAI,
@@ -509,16 +510,36 @@ export default function QuizGenerator() {
 
       if (mentionsAI) {
         console.log('[LearnLite Chat] submit:standalone-ai-triggered');
-        appendWorkspaceMessage({
-          tone: 'incoming',
-          title: '@learnlite',
-          text: "Hey there! I'm @learnlite, your study companion. How can I help you learn today? Ask me anything about your classwork, and I'll do my best to help! 📚",
-          replyTo: {
-            id: `${Date.now()}-prompt`,
-            title: currentUsername,
-            text: messageText
+        try {
+          const aiResult = await aiAPI.chat(null, messageText);
+          console.log('[LearnLite Chat] submit:standalone-ai-response', aiResult);
+          if (aiResult?.success && aiResult?.message) {
+            appendWorkspaceMessage({
+              tone: 'incoming',
+              title: '@learnlite',
+              text: String(aiResult.message).trim(),
+              replyTo: {
+                id: `${Date.now()}-prompt`,
+                title: currentUsername,
+                text: messageText
+              }
+            });
+          } else {
+            appendWorkspaceMessage({
+              tone: 'system',
+              title: '@learnlite',
+              text: 'AI assistant is currently unavailable.'
+            });
           }
-        });
+        } catch (aiErr) {
+          console.log('[LearnLite Chat] submit:standalone-ai-error', aiErr);
+          const aiMessage = getApiErrorMessage(aiErr, 'AI assistant is currently unavailable.');
+          appendWorkspaceMessage({
+            tone: 'system',
+            title: '@learnlite',
+            text: aiMessage
+          });
+        }
       }
 
       setDraftMessage('');
@@ -556,10 +577,12 @@ export default function QuizGenerator() {
 
       if (mentionsAI) {
         console.log('[LearnLite Chat] submit:ai-chat:start');
+        let aiResponded = false;
         try {
           const aiResult = await aiAPI.chat(groupId, messageText);
           console.log('[LearnLite Chat] submit:ai-chat:response', aiResult);
           if (aiResult?.success && aiResult?.message) {
+            aiResponded = true;
             appendWorkspaceMessage({
               tone: 'incoming',
               title: '@learnlite',
@@ -587,7 +610,11 @@ export default function QuizGenerator() {
           });
         }
 
-        console.log('[LearnLite Chat] submit:ai-chat:refresh-messages');
+        if (aiResponded) {
+          console.log('[LearnLite Chat] submit:ai-chat:refresh-messages');
+          await loadGroupMessages();
+        }
+      } else {
         await loadGroupMessages();
       }
     } catch (err) {
@@ -602,10 +629,6 @@ export default function QuizGenerator() {
       console.log('[LearnLite Chat] submit:finally-reset');
       setDraftMessage('');
       setReplyTarget(null);
-      if (!isStandaloneMode) {
-        console.log('[LearnLite Chat] submit:finally-refresh-messages');
-        await loadGroupMessages();
-      }
       console.log('[LearnLite Chat] submit:done');
     }
   };
@@ -1451,6 +1474,32 @@ export default function QuizGenerator() {
               <div className="workspace-attached-note">
                 <span>Attached note</span>
                 <strong>{attachedNote.name}</strong>
+                <div className="workspace-attached-note__actions">
+                  <button
+                    type="button"
+                    className="workspace-mini-button workspace-mini-button--accent"
+                    onClick={() => handleGenerateQuizShortcut()}
+                    disabled={isGeneratingQuiz}
+                  >
+                    {isGeneratingQuiz ? 'Generating...' : 'Use for Quiz'}
+                  </button>
+                  <button
+                    type="button"
+                    className="workspace-mini-button"
+                    onClick={handleGenerateVideoShortcut}
+                  >
+                    Use for Video
+                  </button>
+                  <button
+                    type="button"
+                    className="workspace-mini-button"
+                    onClick={() => {
+                      setDraftMessage(`@learnlite explain this note in simple terms: ${attachedNote.name}`);
+                    }}
+                  >
+                    Ask @learnlite
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1504,7 +1553,7 @@ export default function QuizGenerator() {
                   setDraftMessage(nextValue);
                   console.log('[LearnLite Chat] input:onChange', {
                     value: nextValue,
-                    hasLearnLiteMention: /(^|\s)@learnlite\b/i.test(nextValue)
+                    hasLearnLiteMention: /@(?:learnlite|leanlite)\b/i.test(nextValue)
                   });
                 }}
                 onKeyDown={(event) => {

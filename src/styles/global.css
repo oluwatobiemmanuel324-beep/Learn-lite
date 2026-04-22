@@ -3334,6 +3334,19 @@ textarea {
   color: #e6fff0;
 }
 
+.workspace-attached-note__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+
+.workspace-attached-note__actions .workspace-mini-button {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(12, 32, 36, 0.7);
+  color: #d5ebdf;
+}
+
 .workspace-composer {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

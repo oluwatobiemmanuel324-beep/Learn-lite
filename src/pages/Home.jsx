@@ -706,10 +706,19 @@ const Hero = ({ uploadedFile, onFileChange }) => {
   const handleQuickAccessGroup = async () => {
     if (quickAccessLoading) return;
 
+    const token = localStorage.getItem('learn_lite_token');
+    if (!token) {
+      alert('Please log in to access your groups.');
+      navigate('/login');
+      return;
+    }
+
     setQuickAccessLoading(true);
     try {
+      console.log('[Home] quickAccessGroup:start');
       const result = await groupAPI.getMyGroups();
       const groups = result?.groups || [];
+      console.log('[Home] quickAccessGroup:groups', groups);
 
       if (!groups.length) {
         alert('You do not belong to any class group yet. Create one or join with a code.');
@@ -722,6 +731,11 @@ const Hero = ({ uploadedFile, onFileChange }) => {
         if (b.id === lastOpenedGroupId) return 1;
         return 0;
       });
+
+      if (sortedGroups.length === 1) {
+        openGroupWorkspace(sortedGroups[0]);
+        return;
+      }
 
       setMyGroups(sortedGroups);
       setModalType('groups');

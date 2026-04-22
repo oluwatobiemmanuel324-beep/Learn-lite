@@ -3790,11 +3790,13 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
   try {
     const { groupId, message } = req.body;
     const requesterId = getRequesterUserId(req);
+    const normalizedGroupId = Number(groupId);
+    const isGroupScoped = Number.isFinite(normalizedGroupId) && normalizedGroupId > 0;
 
-    if (!message || !groupId) {
+    if (!message) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Message and groupId are required' 
+        error: 'Message is required' 
       });
     }
 
@@ -3802,38 +3804,41 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
-    // Check if user is part of the group
-    const membership = await prisma.groupMember.findUnique({
-      where: {
-        groupId_userId: {
-          groupId: Number(groupId),
-          userId: requesterId
+    if (isGroupScoped) {
+      // Check if user is part of the group when context is group chat.
+      const membership = await prisma.groupMember.findUnique({
+        where: {
+          groupId_userId: {
+            groupId: normalizedGroupId,
+            userId: requesterId
+          }
         }
-      }
-    });
-
-    if (!membership) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'You are not a member of this group' 
       });
+
+      if (!membership) {
+        return res.status(403).json({ 
+          success: false, 
+          error: 'You are not a member of this group' 
+        });
+      }
     }
 
-    // Check if message mentions learnlite with or without @
-    if (!/\b@?learnlite\b/i.test(message)) {
+    // Accept case-insensitive @learnlite and common typo @leanlite.
+    const mentionRegex = /@(?:learnlite|leanlite)\b/i;
+    if (!mentionRegex.test(String(message || ''))) {
       return res.status(400).json({ 
         success: false, 
         error: 'Message must mention learnlite to get a response' 
       });
     }
 
-    const cleanMessage = String(message || '').replace(/\b@?learnlite\b/ig, '').trim() || 'Share a quick CBT study tip for the class.';
+    const cleanMessage = String(message || '').replace(/@(?:learnlite|leanlite)\b/ig, ' ').trim() || 'Share a quick CBT study tip.';
 
     const prompt = [
       'You are Learn Lite AI tutor for CBT exam preparation.',
       'Be concise, accurate, and practical for students.',
       'Provide short steps, examples, and memory hints where useful.',
-      `Group context id: ${groupId}`,
+      `Context: ${isGroupScoped ? `group-${normalizedGroupId}` : 'solo-study'}`,
       `Student message: ${cleanMessage}`
     ].join('\n');
 
@@ -3844,14 +3849,16 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
     });
 
     const responseText = String(aiResponse || '').trim() || buildGeminiFallbackResponse(cleanMessage);
+    const aiMessageId = `ai-${isGroupScoped ? normalizedGroupId : 'solo'}-${Date.now()}`;
+
     await prisma.backup.create({
       data: {
         userId: requesterId,
         messages: JSON.stringify({
-          type: 'GROUP_CHAT_MESSAGE',
-          groupId: Number(groupId),
+          type: isGroupScoped ? 'GROUP_CHAT_MESSAGE' : 'SOLO_CHAT_MESSAGE',
+          groupId: isGroupScoped ? normalizedGroupId : null,
           senderId: 0,
-          messageId: `ai-${groupId}-${Date.now()}`,
+          messageId: aiMessageId,
           tone: 'incoming',
           title: '@learnlite',
           text: responseText,
@@ -3873,16 +3880,18 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('AI chat error:', err.response?.data || err.message || err);
     const fallbackText = buildGeminiFallbackResponse(req.body?.message);
+    const fallbackGroupId = Number(req.body?.groupId);
+    const isFallbackGroupScoped = Number.isFinite(fallbackGroupId) && fallbackGroupId > 0;
 
     try {
       await prisma.backup.create({
         data: {
           userId: requesterId,
           messages: JSON.stringify({
-            type: 'GROUP_CHAT_MESSAGE',
-            groupId: Number(req.body?.groupId),
+            type: isFallbackGroupScoped ? 'GROUP_CHAT_MESSAGE' : 'SOLO_CHAT_MESSAGE',
+            groupId: isFallbackGroupScoped ? fallbackGroupId : null,
             senderId: 0,
-            messageId: `ai-fallback-${req.body?.groupId || 'group'}-${Date.now()}`,
+            messageId: `ai-fallback-${isFallbackGroupScoped ? fallbackGroupId : 'solo'}-${Date.now()}`,
             tone: 'incoming',
             title: '@learnlite',
             text: fallbackText,
